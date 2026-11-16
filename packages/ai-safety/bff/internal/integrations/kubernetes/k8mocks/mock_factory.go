@@ -10,6 +10,7 @@ import (
 	"github.com/opendatahub-io/ai-safety/bff/internal/config"
 	"github.com/opendatahub-io/ai-safety/bff/internal/constants"
 	k8s "github.com/opendatahub-io/ai-safety/bff/internal/integrations/kubernetes"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
@@ -20,9 +21,14 @@ type MockedKubernetesClientFactory interface {
 }
 
 func NewMockedKubernetesClientFactory(clientset kubernetes.Interface, testEnv *envtest.Environment, cfg config.EnvConfig, logger *slog.Logger) (k8s.KubernetesClientFactory, error) {
+	dynamicClient, err := dynamic.NewForConfig(testEnv.Config)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create dynamic client for mocks: %w", err)
+	}
+
 	switch cfg.AuthMethod {
 	case config.AuthMethodInternal:
-		k8sFactory, err := NewStaticClientFactory(clientset, logger)
+		k8sFactory, err := NewStaticClientFactory(clientset, dynamicClient, logger)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create static client factory: %w", err)
 		}
@@ -45,18 +51,20 @@ type MockedStaticClientFactory struct {
 	logger                       *slog.Logger
 	serviceAccountMockedK8client k8s.KubernetesClientInterface
 	clientset                    kubernetes.Interface
+	dynamicClient                dynamic.Interface
 	initErr                      error
 	initLock                     sync.Mutex
 	realFactoryWithoutClient     k8s.StaticClientFactory
 }
 
-func NewStaticClientFactory(clientset kubernetes.Interface, logger *slog.Logger) (k8s.KubernetesClientFactory, error) {
+func NewStaticClientFactory(clientset kubernetes.Interface, dynamicClient dynamic.Interface, logger *slog.Logger) (k8s.KubernetesClientFactory, error) {
 	realFactoryWithoutClient := k8s.StaticClientFactory{
 		Logger: logger,
 	}
 	return &MockedStaticClientFactory{
 		logger:                   logger,
 		clientset:                clientset,
+		dynamicClient:            dynamicClient,
 		realFactoryWithoutClient: realFactoryWithoutClient,
 	}, nil
 }
@@ -70,7 +78,7 @@ func (f *MockedStaticClientFactory) GetClient(_ context.Context) (k8s.Kubernetes
 	}
 
 	f.logger.Info("Initializing mocked service account client")
-	client := newMockedInternalKubernetesClientFromClientset(f.clientset, f.logger)
+	client := newMockedInternalKubernetesClientFromClientset(f.clientset, f.dynamicClient, f.logger)
 	if client == nil {
 		f.initErr = fmt.Errorf("failed to create mocked service account client")
 		return nil, f.initErr
@@ -87,6 +95,11 @@ func (f *MockedStaticClientFactory) ValidateRequestIdentity(identity *k8s.Reques
 	return f.realFactoryWithoutClient.ValidateRequestIdentity(identity)
 }
 
+// GetInternalClient returns the mocked internal client, matching GetClient behavior.
+func (f *MockedStaticClientFactory) GetInternalClient() (k8s.KubernetesClientInterface, error) {
+	return f.GetClient(context.Background())
+}
+
 // ─── MOCKED TOKEN FACTORY (envtest + "USER TOKEN") ──────────────────────────────
 //
 // MockedTokenClientFactory simulates token-based client creation in tests.
@@ -99,9 +112,11 @@ type MockedTokenClientFactory struct {
 	clientset  kubernetes.Interface
 	restConfig *rest.Config
 
-	clients        map[string]k8s.KubernetesClientInterface
-	initLock       sync.Mutex
-	realK8sFactory k8s.KubernetesClientFactory
+	clients            map[string]k8s.KubernetesClientInterface
+	internalClient     k8s.KubernetesClientInterface
+	internalClientLock sync.Mutex
+	initLock           sync.Mutex
+	realK8sFactory     k8s.KubernetesClientFactory
 }
 
 // NewTokenClientFactory initializes a factory using a known envtest clientset + config.
@@ -128,6 +143,29 @@ func (f *MockedTokenClientFactory) ExtractRequestIdentity(httpHeader http.Header
 
 func (f *MockedTokenClientFactory) ValidateRequestIdentity(identity *k8s.RequestIdentity) error {
 	return f.realK8sFactory.ValidateRequestIdentity(identity)
+}
+
+// GetInternalClient returns a mocked internal (service account) client built
+// from the envtest clientset, used for platform-level reads.
+func (f *MockedTokenClientFactory) GetInternalClient() (k8s.KubernetesClientInterface, error) {
+	f.internalClientLock.Lock()
+	defer f.internalClientLock.Unlock()
+
+	if f.internalClient != nil {
+		return f.internalClient, nil
+	}
+
+	dynamicClient, err := dynamic.NewForConfig(f.restConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create dynamic client for internal mock: %w", err)
+	}
+
+	client := newMockedInternalKubernetesClientFromClientset(f.clientset, dynamicClient, f.logger)
+	if client == nil {
+		return nil, fmt.Errorf("failed to create mocked internal client")
+	}
+	f.internalClient = client
+	return f.internalClient, nil
 }
 
 // GetClient returns a Kubernetes client for the identity in context,
@@ -169,7 +207,12 @@ func (f *MockedTokenClientFactory) GetClient(ctx context.Context) (k8s.Kubernete
 		return nil, fmt.Errorf("failed to create impersonated client: %w", err)
 	}
 
-	client := newMockedTokenKubernetesClientFromClientset(clientset, f.logger)
+	dynamicClient, err := dynamic.NewForConfig(impersonatedCfg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create impersonated dynamic client: %w", err)
+	}
+
+	client := newMockedTokenKubernetesClientFromClientset(clientset, dynamicClient, f.logger)
 	f.clients[identity.Token] = client
 	return client, nil
 }

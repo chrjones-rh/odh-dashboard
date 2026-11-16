@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/opendatahub-io/ai-safety/bff/internal/config"
 	"github.com/opendatahub-io/ai-safety/bff/internal/constants"
@@ -37,6 +38,11 @@ func NewKubernetesClientFactory(cfg config.EnvConfig, logger *slog.Logger) (Kube
 // If running locally (e.g. for development), it uses the current user's kubeconfig context.
 type KubernetesClientFactory interface {
 	GetClient(ctx context.Context) (KubernetesClientInterface, error)
+	// GetInternalClient returns a client using the BFF's own credentials
+	// (service account in-cluster, kubeconfig locally). It is used for
+	// platform-level reads that are not tied to the requesting user's
+	// namespace permissions.
+	GetInternalClient() (KubernetesClientInterface, error)
 	ExtractRequestIdentity(httpHeader http.Header) (*RequestIdentity, error)
 	ValidateRequestIdentity(identity *RequestIdentity) error
 }
@@ -58,6 +64,10 @@ func NewStaticClientFactory(logger *slog.Logger) (KubernetesClientFactory, error
 }
 
 func (f *StaticClientFactory) GetClient(_ context.Context) (KubernetesClientInterface, error) {
+	return f.Client, nil
+}
+
+func (f *StaticClientFactory) GetInternalClient() (KubernetesClientInterface, error) {
 	return f.Client, nil
 }
 
@@ -109,6 +119,13 @@ type TokenClientFactory struct {
 	// NewTokenKubernetesClientFn is the function used to create token-based Kubernetes clients.
 	// This can be overridden by downstream code to provide custom client creation logic.
 	NewTokenKubernetesClientFn func(token string, logger *slog.Logger) (KubernetesClientInterface, error)
+
+	// internalClient is a lazily-created client using the BFF's own credentials,
+	// used for platform-level reads (guardrail template catalog).
+	internalClient      KubernetesClientInterface
+	internalClientErr   error
+	internalClientOnce  bool
+	internalClientMutex sync.Mutex
 }
 
 func NewTokenClientFactory(logger *slog.Logger, cfg config.EnvConfig) KubernetesClientFactory {
@@ -118,6 +135,26 @@ func NewTokenClientFactory(logger *slog.Logger, cfg config.EnvConfig) Kubernetes
 		Prefix:                     cfg.AuthTokenPrefix,
 		NewTokenKubernetesClientFn: NewTokenKubernetesClient,
 	}
+}
+
+// GetInternalClient lazily creates and caches a client using the BFF's own
+// credentials for platform-level reads.
+func (f *TokenClientFactory) GetInternalClient() (KubernetesClientInterface, error) {
+	f.internalClientMutex.Lock()
+	defer f.internalClientMutex.Unlock()
+
+	if f.internalClientOnce {
+		return f.internalClient, f.internalClientErr
+	}
+	f.internalClientOnce = true
+
+	client, err := newInternalKubernetesClient(f.Logger)
+	if err != nil {
+		f.internalClientErr = fmt.Errorf("failed to create internal Kubernetes client: %w", err)
+		return nil, f.internalClientErr
+	}
+	f.internalClient = client
+	return f.internalClient, nil
 }
 
 func (f *TokenClientFactory) ExtractRequestIdentity(httpHeader http.Header) (*RequestIdentity, error) {

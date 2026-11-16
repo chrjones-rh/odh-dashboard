@@ -103,6 +103,12 @@ type EnvConfig struct {
 	// When true, BFF clients return mock responses instead of making real HTTP calls.
 	MockBFFClients bool
 
+	// ─── GUARDRAILS ─────────────────────────────────────────────
+	// GuardrailsTemplateNamespace is the platform namespace holding the guardrail
+	// configuration template ConfigMaps (labeled nemo-guardrails-config=true)
+	// shipped by the trustyai-service-operator.
+	GuardrailsTemplateNamespace string
+
 	// ─── DEPRECATED ─────────────────────────────────────────────
 	// The following fields are deprecated and maintained for backward compatibility
 	// Use DeploymentMode instead

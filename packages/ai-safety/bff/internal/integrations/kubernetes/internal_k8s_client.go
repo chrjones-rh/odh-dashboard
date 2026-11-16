@@ -6,10 +6,12 @@ import (
 	"log/slog"
 	"time"
 
-	helper "github.com/opendatahub-io/ai-safety/bff/internal/helpers"
+	"github.com/opendatahub-io/ai-safety/bff/internal/constants"
+	k8shelper "github.com/opendatahub-io/ai-safety/bff/internal/helpers"
 	authv1 "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 )
 
@@ -23,7 +25,7 @@ type InternalKubernetesClient struct {
 // If running locally (e.g. for development), it uses the current user's kubeconfig context.
 func newInternalKubernetesClient(logger *slog.Logger) (KubernetesClientInterface, error) {
 	// Get kubeconfig
-	kubeconfig, err := helper.GetKubeconfig()
+	kubeconfig, err := k8shelper.GetKubeconfig()
 	if err != nil {
 		logger.Error("failed to get kubeconfig", "error", err)
 		return nil, fmt.Errorf("failed to get kubeconfig: %w", err)
@@ -36,13 +38,99 @@ func newInternalKubernetesClient(logger *slog.Logger) (KubernetesClientInterface
 		return nil, fmt.Errorf("failed to create Kubernetes client: %w", err)
 	}
 
+	dynamicClient, err := dynamic.NewForConfig(kubeconfig)
+	if err != nil {
+		logger.Error("failed to create dynamic Kubernetes client", "error", err)
+		return nil, fmt.Errorf("failed to create dynamic Kubernetes client: %w", err)
+	}
+
 	return &InternalKubernetesClient{
 		SharedClientLogic: SharedClientLogic{
-			Client: clientset,
-			Logger: logger,
-			Token:  NewBearerToken(kubeconfig.BearerToken),
+			Client:        clientset,
+			Logger:        logger,
+			Token:         NewBearerToken(kubeconfig.BearerToken),
+			DynamicClient: dynamicClient,
 		},
 	}, nil
+}
+
+// subjectAccessReview performs a SubjectAccessReview for the request identity.
+func (kc *InternalKubernetesClient) subjectAccessReview(ctx context.Context, identity *RequestIdentity, verb, group, resource, namespace string) (bool, error) {
+	sar := &authv1.SubjectAccessReview{
+		Spec: authv1.SubjectAccessReviewSpec{
+			User:   identity.UserID,
+			Groups: identity.Groups,
+			ResourceAttributes: &authv1.ResourceAttributes{
+				Verb:      verb,
+				Group:     group,
+				Resource:  resource,
+				Namespace: namespace,
+			},
+		},
+	}
+
+	response, err := kc.Client.AuthorizationV1().SubjectAccessReviews().Create(ctx, sar, metav1.CreateOptions{})
+	if err != nil {
+		return false, fmt.Errorf("failed to create SubjectAccessReview: %w", err)
+	}
+	return response.Status.Allowed, nil
+}
+
+// CanListNemoGuardrails performs a SubjectAccessReview for the request identity
+// against the NemoGuardrails resource in the namespace.
+func (kc *InternalKubernetesClient) CanListNemoGuardrails(ctx context.Context, identity *RequestIdentity, namespace string) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	return kc.subjectAccessReview(ctx, identity, "list", constants.NemoGuardrailsAPIGroup, constants.NemoGuardrailsPlural, namespace)
+}
+
+// CanListConfigMaps performs a SubjectAccessReview for the request identity
+// against ConfigMaps in the namespace.
+func (kc *InternalKubernetesClient) CanListConfigMaps(ctx context.Context, identity *RequestIdentity, namespace string) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	return kc.subjectAccessReview(ctx, identity, "list", "", "configmaps", namespace)
+}
+
+// CanDeleteNemoGuardrails performs a SubjectAccessReview for the request
+// identity against NemoGuardrails deletion in the namespace.
+func (kc *InternalKubernetesClient) CanDeleteNemoGuardrails(ctx context.Context, identity *RequestIdentity, namespace string) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	return kc.subjectAccessReview(ctx, identity, "delete", constants.NemoGuardrailsAPIGroup, constants.NemoGuardrailsPlural, namespace)
+}
+
+// CanCreateGuardrailDeployment performs SubjectAccessReviews for the request
+// identity covering both resources created when deploying a guardrail template
+// (ConfigMap and NemoGuardrails CR) in the namespace.
+func (kc *InternalKubernetesClient) CanCreateGuardrailDeployment(ctx context.Context, identity *RequestIdentity, namespace string) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	review := func(verb, group, resource string) (bool, error) {
+		sar := &authv1.SubjectAccessReview{
+			Spec: authv1.SubjectAccessReviewSpec{
+				User:   identity.UserID,
+				Groups: identity.Groups,
+				ResourceAttributes: &authv1.ResourceAttributes{
+					Verb:      verb,
+					Group:     group,
+					Resource:  resource,
+					Namespace: namespace,
+				},
+			},
+		}
+		response, err := kc.Client.AuthorizationV1().SubjectAccessReviews().Create(ctx, sar, metav1.CreateOptions{})
+		if err != nil {
+			return false, fmt.Errorf("failed to create SubjectAccessReview: %w", err)
+		}
+		return response.Status.Allowed, nil
+	}
+
+	return kc.canCreateResources(ctx, namespace, review)
 }
 
 // Removed service discovery and service-level access checks for starter template.

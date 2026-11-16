@@ -26,7 +26,7 @@
     "cypress:open:mock": "CY_MOCK=1 pnpm run cypress:open",
     "cypress:run": "cypress run -b chrome --project src/__tests__/cypress",
     "cypress:run:mock": "CY_MOCK=1 pnpm run cypress:run",
-    "cypress:server:build": "DIST_DIR=./public-cypress POLL_INTERVAL=9999999 DEPLOYMENT_MODE=federated pnpm run build",
+    "cypress:server:build": "DIST_DIR=./public-cypress POLL_INTERVAL=9999999 DEPLOYMENT_MODE=standalone pnpm run build",
     "cypress:server": "serve ./public-cypress -p 9114 -s -L",
     "start:default": "STYLE_THEME=patternfly-theme pnpm run start:dev"
   },

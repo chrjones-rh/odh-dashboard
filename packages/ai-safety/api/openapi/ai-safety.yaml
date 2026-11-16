@@ -71,6 +71,200 @@ paths:
       operationId: getConfig
       summary: Get configuration info
       description: Gets the configuration information needed for the UI [TBD]
+  /api/v1/guardrails/templates:
+    summary: Path used to list guardrail configuration templates.
+    description: >-
+      The REST endpoint/path used to list guardrail configuration templates.
+      Templates are ConfigMaps labeled with nemo-guardrails-config=true in the
+      platform (dashboard) namespace, shipped by the trustyai-service-operator.
+    get:
+      tags:
+        - Guardrails
+      responses:
+        '200':
+          description: 'Ok'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/GuardrailTemplate'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      operationId: getGuardrailTemplates
+      summary: Get Guardrail Templates
+      description: Returns the guardrail configuration templates available on the platform.
+  /api/v1/guardrails/templates/{name}:
+    summary: Path used to get a single guardrail configuration template.
+    get:
+      tags:
+        - Guardrails
+      parameters:
+        - name: name
+          description: Name of the guardrail template ConfigMap.
+          schema:
+            type: string
+          in: path
+          required: true
+      responses:
+        '200':
+          description: 'Ok'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/GuardrailTemplateDetail'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      operationId: getGuardrailTemplate
+      summary: Get Guardrail Template
+      description: Returns a single guardrail configuration template with its full file contents.
+  /api/v1/guardrails/deployments:
+    summary: Path used to list NemoGuardrails deployments in a namespace.
+    get:
+      tags:
+        - Guardrails
+      parameters:
+        - $ref: '#/components/parameters/namespace'
+      responses:
+        '200':
+          description: 'Ok'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/GuardrailDeployment'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      operationId: getGuardrailDeployments
+      summary: Get Guardrails Deployments
+      description: >-
+        Returns the NemoGuardrails deployments in the given namespace, including
+        status and the configuration source (template ConfigMap vs custom YAML).
+    post:
+      tags:
+        - Guardrails
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GuardrailDeploymentCreateRequest'
+      responses:
+        '201':
+          description: 'Created'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/GuardrailDeployment'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/ConflictResponse'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      operationId: createGuardrailDeployment
+      summary: Deploy a Guardrail Template
+      description: >-
+        Copies the given guardrail template ConfigMap into the target namespace
+        and creates a NemoGuardrails custom resource referencing it. Requires
+        permission to create configmaps and nemoguardrails in the namespace.
+  /api/v1/guardrails/deployments/{name}:
+    summary: Path used to get a single NemoGuardrails deployment.
+    get:
+      tags:
+        - Guardrails
+      parameters:
+        - name: name
+          description: Name of the NemoGuardrails custom resource.
+          schema:
+            type: string
+          in: path
+          required: true
+        - $ref: '#/components/parameters/namespace'
+      responses:
+        '200':
+          description: 'Ok'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/GuardrailDeploymentDetail'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      operationId: getGuardrailDeployment
+      summary: Get Guardrails Deployment
+      description: Returns a single NemoGuardrails deployment with its full specification.
+    delete:
+      tags:
+        - Guardrails
+      parameters:
+        - name: name
+          description: Name of the NemoGuardrails custom resource.
+          schema:
+            type: string
+          in: path
+          required: true
+        - $ref: '#/components/parameters/namespace'
+      responses:
+        '204':
+          description: 'No Content - the deployment was deleted'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      operationId: deleteGuardrailDeployment
+      summary: Delete Guardrails Deployment
+      description: >-
+        Deletes the NemoGuardrails deployment and the dashboard-created
+        ConfigMap copies for it. Requires permission to delete nemoguardrails
+        in the namespace. User-managed ConfigMaps are never deleted.
 components:
   schemas:
     Config:
@@ -254,6 +448,267 @@ components:
         message:
           description: Error message
           type: string
+    GuardrailConfigSummary:
+      description: Best-effort summary of a NeMo Guardrails config.yaml file.
+      type: object
+      required:
+        - modelCount
+        - models
+        - railFlows
+        - promptCount
+        - passthrough
+      properties:
+        modelCount:
+          description: Number of model entries declared in the config.
+          type: integer
+        models:
+          description: Model descriptors in the form "engine/model (type)".
+          type: array
+          items:
+            type: string
+        railFlows:
+          description: Rail flows declared in the config, per category.
+          type: array
+          items:
+            $ref: '#/components/schemas/GuardrailRailFlow'
+        promptCount:
+          description: Number of prompts declared in the config.
+          type: integer
+        passthrough:
+          description: Whether the config sets passthrough mode (no LLM calls).
+          type: boolean
+    GuardrailRailFlow:
+      description: A single rail flow within a NeMo Guardrails config.
+      type: object
+      required:
+        - category
+        - flow
+      properties:
+        category:
+          description: Rail category (input, output, retrieval, dialog, tool_input, tool_output).
+          type: string
+        flow:
+          description: Flow name.
+          type: string
+    GuardrailTemplate:
+      description: A guardrail configuration template shipped on the platform.
+      type: object
+      required:
+        - name
+        - namespace
+        - keys
+        - createdAt
+        - summary
+      properties:
+        name:
+          description: Name of the template ConfigMap.
+          type: string
+        namespace:
+          description: Namespace the template ConfigMap lives in.
+          type: string
+        keys:
+          description: Configuration file keys contained in the ConfigMap.
+          type: array
+          items:
+            type: string
+        createdAt:
+          description: Creation timestamp of the ConfigMap (RFC 3339).
+          type: string
+        summary:
+          $ref: '#/components/schemas/GuardrailConfigSummary'
+        description:
+          description: Human-readable description from the guardrail-description annotation.
+          type: string
+        actions:
+          description: Actions taken by the guardrail (for example block, mask).
+          type: array
+          items:
+            type: string
+        locations:
+          description: Enforcement locations of the guardrail (input, output).
+          type: array
+          items:
+            type: string
+        tags:
+          description: Tags describing the guardrail.
+          type: array
+          items:
+            type: string
+    GuardrailTemplateDetail:
+      description: A guardrail configuration template with full file contents.
+      allOf:
+        - $ref: '#/components/schemas/GuardrailTemplate'
+        - type: object
+          required:
+            - files
+          properties:
+            files:
+              description: The configuration files contained in the template.
+              type: array
+              items:
+                $ref: '#/components/schemas/GuardrailConfigFile'
+    GuardrailConfigFile:
+      description: A single configuration file within a guardrail ConfigMap.
+      type: object
+      required:
+        - key
+        - content
+      properties:
+        key:
+          description: File key (for example config.yaml, rails.co, actions.py).
+          type: string
+        content:
+          description: Full file content.
+          type: string
+    GuardrailCondition:
+      description: A status condition on a NemoGuardrails resource.
+      type: object
+      required:
+        - type
+        - status
+      properties:
+        type:
+          description: Condition type (for example DeploymentReady, RouteReady).
+          type: string
+        status:
+          description: Condition status (True, False, Unknown).
+          type: string
+        reason:
+          description: Machine-readable reason.
+          type: string
+        message:
+          description: Human-readable message.
+          type: string
+        lastTransitionTime:
+          description: Last transition timestamp (RFC 3339).
+          type: string
+    GuardrailConfigSource:
+      description: A ConfigMap referenced by a NemoGuardrails deployment.
+      type: object
+      required:
+        - name
+        - found
+      properties:
+        name:
+          description: Name of the referenced ConfigMap.
+          type: string
+        found:
+          description: Whether the ConfigMap exists in the deployment namespace.
+          type: boolean
+        keys:
+          description: Configuration file keys contained in the ConfigMap.
+          type: array
+          items:
+            type: string
+        hasModelSpec:
+          description: Whether the config.yaml declares a models section (custom YAML mode).
+          type: boolean
+        isOperatorTemplate:
+          description: Whether the ConfigMap is managed by the trustyai-service-operator.
+          type: boolean
+    GuardrailDeployment:
+      description: A NemoGuardrails deployment in a namespace.
+      type: object
+      required:
+        - name
+        - namespace
+        - phase
+        - ready
+        - createdAt
+        - conditions
+        - configSources
+      properties:
+        name:
+          description: Name of the NemoGuardrails custom resource.
+          type: string
+        namespace:
+          description: Namespace of the NemoGuardrails custom resource.
+          type: string
+        phase:
+          description: Observed phase reported by the operator (for example Ready).
+          type: string
+        ready:
+          description: Whether the DeploymentReady condition is True.
+          type: boolean
+        endpoint:
+          description: In-cluster endpoint reported by the operator, when available.
+          type: string
+        replicas:
+          description: Configured replica count.
+          type: integer
+        createdAt:
+          description: Creation timestamp of the resource (RFC 3339).
+          type: string
+        conditions:
+          description: Status conditions reported by the operator.
+          type: array
+          items:
+            $ref: '#/components/schemas/GuardrailCondition'
+        configSources:
+          description: ConfigMaps referenced by the deployment's nemoConfigs.
+          type: array
+          items:
+            $ref: '#/components/schemas/GuardrailConfigSource'
+    GuardrailDeploymentDetail:
+      description: A NemoGuardrails deployment with its full specification.
+      allOf:
+        - $ref: '#/components/schemas/GuardrailDeployment'
+        - type: object
+          properties:
+            exposeRoute:
+              description: Whether the deployment exposes an OpenShift route.
+              type: boolean
+            envVarNames:
+              description: Names of environment variables defined on the deployment (values are never returned).
+              type: array
+              items:
+                type: string
+            nemoConfigs:
+              description: The nemoConfigs entries of the resource spec.
+              type: array
+              items:
+                $ref: '#/components/schemas/GuardrailNemoConfig'
+    GuardrailNemoConfig:
+      description: A single nemoConfigs entry of a NemoGuardrails resource.
+      type: object
+      required:
+        - name
+        - configMaps
+        - default
+      properties:
+        name:
+          description: Config identifier used as the mount directory name.
+          type: string
+        configMaps:
+          description: ConfigMaps that comprise the configuration.
+          type: array
+          items:
+            type: string
+        default:
+          description: Whether this config is the nemo-server default.
+          type: boolean
+    GuardrailDeploymentCreateRequest:
+      description: Request to deploy a guardrail template into a namespace.
+      type: object
+      required:
+        - name
+        - namespace
+        - templateName
+      properties:
+        name:
+          description: >-
+            Name for the NemoGuardrails deployment. Must be a DNS-1123 compliant
+            lowercase name (max 63 characters).
+          type: string
+          example: my-pii-guardrail
+        namespace:
+          description: Target namespace for the deployment.
+          type: string
+          example: my-project
+        templateName:
+          description: Name of the guardrail template ConfigMap to deploy from.
+          type: string
+          example: trustyai-service-operator-nemo-guardrails-default-pii
     SortOrder:
       description: Supported sort direction for ordering result entities.
       enum:
@@ -287,6 +742,12 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
       description: Unauthorized
+    Forbidden:
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+      description: Forbidden - the user does not have permission to access this resource
     InternalServerError:
       content:
         application/json:
@@ -410,3 +871,5 @@ security:
 tags:
   - name: K8SOperation
     description: Operation performed in Kubernetes
+  - name: Guardrails
+    description: NeMo Guardrails templates and deployments

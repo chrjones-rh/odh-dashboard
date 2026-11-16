@@ -2,10 +2,16 @@
 import type { GenericStaticResponse, RouteHandlerController } from 'cypress/types/net-stubbing';
 import type { Namespace, UserSettings } from 'mod-arch-core';
 import { mockModArchResponse } from 'mod-arch-core';
+import type {
+  GuardrailDeployment,
+  GuardrailDeploymentDetail,
+  GuardrailTemplate,
+  GuardrailTemplateDetail,
+} from '~/app/types';
 import type { RoleBindingKind } from '../../../shared/types';
 
-const MODEL_REGISTRY_API_VERSION = 'v1';
-export { MODEL_REGISTRY_API_VERSION };
+const CLIENT_API_VERSION = 'v1';
+export { CLIENT_API_VERSION };
 
 type SuccessErrorResponse = {
   success: boolean;
@@ -40,6 +46,36 @@ declare global {
           type: 'GET /api/:apiVersion/settings/role_bindings',
           options: { path: { apiVersion: string } },
           response: ApiResponse<RoleBindingKind[]>,
+        ) => Cypress.Chainable<null>) &
+        ((
+          type: 'GET /api/:apiVersion/guardrails/templates',
+          options: { path: { apiVersion: string } },
+          response: ApiResponse<GuardrailTemplate[]>,
+        ) => Cypress.Chainable<null>) &
+        ((
+          type: 'GET /api/:apiVersion/guardrails/templates/:name',
+          options: { path: { apiVersion: string; name: string } },
+          response: ApiResponse<GuardrailTemplateDetail>,
+        ) => Cypress.Chainable<null>) &
+        ((
+          type: 'GET /api/:apiVersion/guardrails/deployments',
+          options: { path: { apiVersion: string }; query: { namespace: string } },
+          response: ApiResponse<GuardrailDeployment[]>,
+        ) => Cypress.Chainable<null>) &
+        ((
+          type: 'POST /api/:apiVersion/guardrails/deployments',
+          options: { path: { apiVersion: string } },
+          response: ApiResponse<GuardrailDeployment>,
+        ) => Cypress.Chainable<null>) &
+        ((
+          type: 'DELETE /api/:apiVersion/guardrails/deployments/:name',
+          options: { path: { apiVersion: string; name: string }; query: { namespace: string } },
+          response: ApiResponse<void>,
+        ) => Cypress.Chainable<null>) &
+        ((
+          type: 'GET /api/:apiVersion/guardrails/deployments/:name',
+          options: { path: { apiVersion: string; name: string }; query: { namespace: string } },
+          response: ApiResponse<GuardrailDeploymentDetail>,
         ) => Cypress.Chainable<null>);
     }
   }

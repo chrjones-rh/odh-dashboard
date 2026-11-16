@@ -33,6 +33,11 @@ const (
 	HealthCheckPath = "/healthcheck"
 	UserPath        = ApiPathPrefix + "/user"
 	NamespacePath   = ApiPathPrefix + "/namespaces"
+
+	GuardrailsTemplatesPath        = ApiPathPrefix + "/guardrails/templates"
+	GuardrailsTemplateDetailPath   = ApiPathPrefix + "/guardrails/templates/:name"
+	GuardrailsDeploymentsPath      = ApiPathPrefix + "/guardrails/deployments"
+	GuardrailsDeploymentDetailPath = ApiPathPrefix + "/guardrails/deployments/:name"
 )
 
 type App struct {
@@ -175,6 +180,14 @@ func (app *App) Routes() http.Handler {
 	// Minimal Kubernetes-backed starter endpoints
 	apiRouter.GET(UserPath, app.UserHandler)
 	apiRouter.GET(NamespacePath, app.GetNamespacesHandler)
+
+	// Guardrails endpoints
+	apiRouter.GET(GuardrailsTemplatesPath, app.GetGuardrailTemplatesHandler)
+	apiRouter.GET(GuardrailsTemplateDetailPath, app.GetGuardrailTemplateHandler)
+	apiRouter.GET(GuardrailsDeploymentsPath, app.AttachNamespace(app.GetGuardrailDeploymentsHandler))
+	apiRouter.POST(GuardrailsDeploymentsPath, app.CreateGuardrailDeploymentHandler)
+	apiRouter.GET(GuardrailsDeploymentDetailPath, app.AttachNamespace(app.GetGuardrailDeploymentHandler))
+	apiRouter.DELETE(GuardrailsDeploymentDetailPath, app.AttachNamespace(app.DeleteGuardrailDeploymentHandler))
 
 	// Inter-BFF Communication routes — wire your target BFF endpoints here.
 	// Example:

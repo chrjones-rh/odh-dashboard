@@ -7,11 +7,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/opendatahub-io/ai-safety/bff/internal/constants"
 	helper "github.com/opendatahub-io/ai-safety/bff/internal/helpers"
 	authnv1 "k8s.io/api/authentication/v1"
 	authv1 "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 )
@@ -80,15 +82,104 @@ func NewTokenKubernetesClient(token string, logger *slog.Logger) (KubernetesClie
 		return nil, fmt.Errorf("failed to create Kubernetes client: %w", err)
 	}
 
+	dynamicClient, err := dynamic.NewForConfig(cfg)
+	if err != nil {
+		logger.Error("failed to create token-based dynamic Kubernetes client", "error", err)
+		return nil, fmt.Errorf("failed to create dynamic Kubernetes client: %w", err)
+	}
+
 	return &TokenKubernetesClient{
 		SharedClientLogic: SharedClientLogic{
 			Client: clientset,
 			Logger: logger,
 			// Token is retained for follow-up calls; do not log it.
-			Token: NewBearerToken(token),
+			Token:         NewBearerToken(token),
+			DynamicClient: dynamicClient,
 		},
 		restConfig: cfg,
 	}, nil
+}
+
+// selfSubjectAccessReview performs a SelfSubjectAccessReview for the token user.
+// RequestIdentity is unused because the token already represents the user identity.
+func (kc *TokenKubernetesClient) selfSubjectAccessReview(ctx context.Context, verb, group, resource, namespace string) (bool, error) {
+	sar := &authv1.SelfSubjectAccessReview{
+		Spec: authv1.SelfSubjectAccessReviewSpec{
+			ResourceAttributes: &authv1.ResourceAttributes{
+				Verb:      verb,
+				Group:     group,
+				Resource:  resource,
+				Namespace: namespace,
+			},
+		},
+	}
+
+	resp, err := kc.Client.AuthorizationV1().SelfSubjectAccessReviews().Create(ctx, sar, metav1.CreateOptions{})
+	if err != nil {
+		kc.Logger.Error("self-SAR failed", "namespace", namespace, "resource", resource, "error", err)
+		return false, fmt.Errorf("failed to create SelfSubjectAccessReview: %w", err)
+	}
+	return resp.Status.Allowed, nil
+}
+
+// CanListNemoGuardrails performs a SelfSubjectAccessReview for the token user
+// against the NemoGuardrails resource in the namespace.
+// RequestIdentity is unused because the token already represents the user identity.
+func (kc *TokenKubernetesClient) CanListNemoGuardrails(ctx context.Context, _ *RequestIdentity, namespace string) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	return kc.selfSubjectAccessReview(ctx, "list", constants.NemoGuardrailsAPIGroup, constants.NemoGuardrailsPlural, namespace)
+}
+
+// CanListConfigMaps performs a SelfSubjectAccessReview for the token user
+// against ConfigMaps in the namespace.
+// RequestIdentity is unused because the token already represents the user identity.
+func (kc *TokenKubernetesClient) CanListConfigMaps(ctx context.Context, _ *RequestIdentity, namespace string) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	return kc.selfSubjectAccessReview(ctx, "list", "", "configmaps", namespace)
+}
+
+// CanDeleteNemoGuardrails performs a SelfSubjectAccessReview for the token
+// user against NemoGuardrails deletion in the namespace.
+// RequestIdentity is unused because the token already represents the user identity.
+func (kc *TokenKubernetesClient) CanDeleteNemoGuardrails(ctx context.Context, _ *RequestIdentity, namespace string) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	return kc.selfSubjectAccessReview(ctx, "delete", constants.NemoGuardrailsAPIGroup, constants.NemoGuardrailsPlural, namespace)
+}
+
+// CanCreateGuardrailDeployment performs SelfSubjectAccessReviews covering both
+// resources created when deploying a guardrail template (ConfigMap and
+// NemoGuardrails CR) in the namespace.
+// RequestIdentity is unused because the token already represents the user identity.
+func (kc *TokenKubernetesClient) CanCreateGuardrailDeployment(ctx context.Context, _ *RequestIdentity, namespace string) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	review := func(verb, group, resource string) (bool, error) {
+		sar := &authv1.SelfSubjectAccessReview{
+			Spec: authv1.SelfSubjectAccessReviewSpec{
+				ResourceAttributes: &authv1.ResourceAttributes{
+					Verb:      verb,
+					Group:     group,
+					Resource:  resource,
+					Namespace: namespace,
+				},
+			},
+		}
+		resp, err := kc.Client.AuthorizationV1().SelfSubjectAccessReviews().Create(ctx, sar, metav1.CreateOptions{})
+		if err != nil {
+			kc.Logger.Error("self-SAR failed", "namespace", namespace, "resource", resource, "error", err)
+			return false, fmt.Errorf("failed to create SelfSubjectAccessReview: %w", err)
+		}
+		return resp.Status.Allowed, nil
+	}
+
+	return kc.canCreateResources(ctx, namespace, review)
 }
 
 // RESTConfig returns the rest.Config used to create this client.

@@ -181,11 +181,27 @@ cd frontend && pnpm run test:cypress-ci -- --spec "**/testfile.cy.ts"
 
 ### Current Endpoints
 
-| Method | Path                 | Description                          |
-| ------ | -------------------- | ------------------------------------ |
-| GET    | `/healthcheck`       | Liveness probe                       |
-| GET    | `/api/v1/user`       | Returns authenticated user info      |
-| GET    | `/api/v1/namespaces` | List namespaces (dev/mock mode only) |
+| Method | Path                                    | Description                                                 |
+| ------ | --------------------------------------- | ----------------------------------------------------------- |
+| GET    | `/healthcheck`                          | Liveness probe                                              |
+| GET    | `/api/v1/user`                          | Returns authenticated user info                             |
+| GET    | `/api/v1/namespaces`                    | List namespaces (dev/mock mode only)                        |
+| GET    | `/api/v1/guardrails/templates`          | List templates: platform catalog plus user namespace        |
+| GET    | `/api/v1/guardrails/templates/{name}`   | Get a guardrail template with full file contents            |
+| GET    | `/api/v1/guardrails/deployments`        | List NemoGuardrails deployments in a namespace (SSAR-gated) |
+| POST   | `/api/v1/guardrails/deployments`        | Deploy a template (SSAR-gated on create configmaps + CRs)   |
+| GET    | `/api/v1/guardrails/deployments/{name}` | Get a NemoGuardrails deployment with its full specification |
+| DELETE | `/api/v1/guardrails/deployments/{name}` | Delete a deployment and its dashboard-created ConfigMaps    |
+
+Guardrails notes:
+
+- Templates are ConfigMaps labeled `nemo-guardrails-config=true` in the namespace configured by
+  `-guardrails-template-namespace` / `GUARDRAILS_TEMPLATE_NAMESPACE` (default `redhat-ods-applications`).
+  They are read with the BFF's own credentials (platform-level config, like the MLflow DashboardConfig pattern).
+- Deployments are `NemoGuardrails` CRs (`trustyai.opendatahub.io/v1alpha1`) read with the requesting
+  user's token and gated by a SelfSubjectAccessReview for `list nemoguardrails` in the namespace.
+- Each deployment reports its configuration sources: ConfigMaps referenced by `spec.nemoConfigs`,
+  classified as template (no model spec) or custom config (`config.yaml` declares `models:`).
 
 ---
 

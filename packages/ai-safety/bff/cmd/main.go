@@ -9,6 +9,7 @@ import (
 
 	"github.com/opendatahub-io/ai-safety/bff/internal/api"
 	"github.com/opendatahub-io/ai-safety/bff/internal/config"
+	"github.com/opendatahub-io/ai-safety/bff/internal/constants"
 	tlsprofile "github.com/opendatahub-io/odh-dashboard/pkg/tls"
 
 	"log/slog"
@@ -42,6 +43,10 @@ func main() {
 	flag.StringVar(&cfg.AuthMethod, "auth-method", "user_token", "Authentication method (internal or user_token)")
 	flag.StringVar(&cfg.AuthTokenHeader, "auth-token-header", getEnvAsString("AUTH_TOKEN_HEADER", config.DefaultAuthTokenHeader), "Header used to extract the token (e.g., Authorization)")
 	flag.StringVar(&cfg.AuthTokenPrefix, "auth-token-prefix", getEnvAsString("AUTH_TOKEN_PREFIX", config.DefaultAuthTokenPrefix), "Prefix used in the token header (e.g., 'Bearer ')")
+
+	flag.StringVar(&cfg.GuardrailsTemplateNamespace, "guardrails-template-namespace",
+		getEnvAsString("GUARDRAILS_TEMPLATE_NAMESPACE", constants.DefaultGuardrailsTemplateNamespace),
+		"Namespace holding the guardrail configuration template ConfigMaps")
 
 	// TLS configuration flags
 	flag.BoolVar(&cfg.InsecureSkipVerify, "insecure-skip-verify", getEnvAsBool("INSECURE_SKIP_VERIFY", false), "Skip TLS certificate verification (useful for development, default: false)")

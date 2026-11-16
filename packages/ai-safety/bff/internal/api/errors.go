@@ -60,6 +60,13 @@ func (app *App) notFoundResponse(w http.ResponseWriter, r *http.Request) {
 	app.errorResponse(w, r, httpError)
 }
 
+func (app *App) conflictResponse(w http.ResponseWriter, r *http.Request, err error) {
+	app.LogError(r, err)
+
+	httpError := &HTTPError{StatusCode: http.StatusConflict, Error: ErrorPayload{Code: strconv.Itoa(http.StatusConflict), Message: err.Error()}}
+	app.errorResponse(w, r, httpError)
+}
+
 func (app *App) methodNotAllowedResponse(w http.ResponseWriter, r *http.Request) {
 
 	httpError := &HTTPError{StatusCode: http.StatusMethodNotAllowed, Error: ErrorPayload{Code: strconv.Itoa(http.StatusMethodNotAllowed), Message: fmt.Sprintf("the %s method is not supported for this resource", r.Method)}}

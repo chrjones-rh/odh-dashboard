@@ -33,12 +33,22 @@ const extensions: (NavExtension | RouteExtension | AreaExtension)[] = [
       required: [SupportedArea.PLUGIN_AI_SAFETY],
     },
     properties: {
-      id: 'ai-safety-view',
-      title: 'AI Safety Studio',
-      href: '/ai-safety/main-view',
+      id: 'ai-safety-guardrails-view',
+      title: 'Guardrails',
+      href: '/ai-safety/guardrails',
       section: 'ai-safety',
-      path: '/ai-safety/main-view/*',
-      label: 'Dev Preview',
+      path: '/ai-safety/guardrails/*',
+      label: 'Tech Preview',
+    },
+  },
+  {
+    type: 'app.route',
+    flags: {
+      required: [SupportedArea.PLUGIN_AI_SAFETY],
+    },
+    properties: {
+      path: '/ai-safety/guardrails/*',
+      component: () => import('./AiSafetyGuardrailsWrapper'),
     },
   },
   {

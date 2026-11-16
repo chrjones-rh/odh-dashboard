@@ -27,3 +27,85 @@ export type NamespaceKind = {
   name: string;
   displayName?: string;
 };
+
+export type GuardrailRailFlow = {
+  category: string;
+  flow: string;
+};
+
+export type GuardrailConfigSummary = {
+  modelCount: number;
+  models: string[];
+  railFlows: GuardrailRailFlow[];
+  promptCount: number;
+  passthrough: boolean;
+};
+
+export type GuardrailTemplate = {
+  name: string;
+  namespace: string;
+  keys: string[];
+  createdAt: string;
+  summary: GuardrailConfigSummary;
+  description?: string;
+  actions?: string[];
+  locations?: string[];
+  tags?: string[];
+  source: 'platform' | 'user';
+};
+
+export type GuardrailConfigFile = {
+  key: string;
+  content: string;
+};
+
+export type GuardrailTemplateDetail = GuardrailTemplate & {
+  files: GuardrailConfigFile[];
+};
+
+export type GuardrailCondition = {
+  type: string;
+  status: string;
+  reason?: string;
+  message?: string;
+  lastTransitionTime?: string;
+};
+
+export type GuardrailConfigSource = {
+  name: string;
+  found: boolean;
+  keys?: string[];
+  hasModelSpec?: boolean;
+  isOperatorTemplate?: boolean;
+};
+
+export type GuardrailDeployment = {
+  name: string;
+  namespace: string;
+  phase: string;
+  ready: boolean;
+  endpoint?: string;
+  replicas?: number;
+  createdAt: string;
+  conditions: GuardrailCondition[];
+  configSources: GuardrailConfigSource[];
+};
+
+export type GuardrailNemoConfig = {
+  name: string;
+  configMaps: string[];
+  default: boolean;
+};
+
+export type GuardrailDeploymentDetail = GuardrailDeployment & {
+  exposeRoute?: boolean;
+  envVarNames?: string[];
+  nemoConfigs?: GuardrailNemoConfig[];
+};
+
+export type GuardrailDeploymentCreateRequest = {
+  name: string;
+  namespace: string;
+  templateName: string;
+  templateNamespace?: string;
+};
