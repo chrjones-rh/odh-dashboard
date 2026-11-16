@@ -38,6 +38,7 @@ const (
 	GuardrailsTemplateDetailPath   = ApiPathPrefix + "/guardrails/templates/:name"
 	GuardrailsDeploymentsPath      = ApiPathPrefix + "/guardrails/deployments"
 	GuardrailsDeploymentDetailPath = ApiPathPrefix + "/guardrails/deployments/:name"
+	ModelsPath                     = ApiPathPrefix + "/models"
 )
 
 type App struct {
@@ -188,6 +189,8 @@ func (app *App) Routes() http.Handler {
 	apiRouter.POST(GuardrailsDeploymentsPath, app.CreateGuardrailDeploymentHandler)
 	apiRouter.GET(GuardrailsDeploymentDetailPath, app.AttachNamespace(app.GetGuardrailDeploymentHandler))
 	apiRouter.DELETE(GuardrailsDeploymentDetailPath, app.AttachNamespace(app.DeleteGuardrailDeploymentHandler))
+	// Serving models for guardrail model wiring
+	apiRouter.GET(ModelsPath, app.AttachNamespace(app.GetServingModelsHandler))
 
 	// Inter-BFF Communication routes — wire your target BFF endpoints here.
 	// Example:

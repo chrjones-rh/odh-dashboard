@@ -4,6 +4,7 @@ import {
   useGuardrailDeployments,
   useGuardrailTemplate,
   useGuardrailTemplates,
+  useServingModels,
 } from '~/app/hooks/useGuardrails';
 import * as guardrailsApi from '~/app/api/guardrails';
 import { GuardrailTemplate } from '~/app/types';
@@ -13,6 +14,7 @@ jest.mock('~/app/api/guardrails', () => ({
   getGuardrailTemplate: jest.fn(),
   getGuardrailDeployments: jest.fn(),
   getGuardrailDeployment: jest.fn(),
+  getServingModels: jest.fn(),
 }));
 
 const apiMocks = jest.mocked(guardrailsApi);
@@ -174,5 +176,55 @@ describe('useGuardrailDeployment', () => {
     expect(loaded).toBe(true);
     expect(error).toBeUndefined();
     expect(result).toEqual(detail);
+  });
+});
+
+describe('useServingModels', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('should return an empty list when no namespace is set', async () => {
+    const renderResult = testHook(useServingModels)('');
+    await renderResult.waitForNextUpdate();
+
+    const [models, loaded] = renderResult.result.current;
+    expect(models).toEqual([]);
+    expect(loaded).toBe(true);
+    expect(apiMocks.getServingModels).not.toHaveBeenCalled();
+  });
+
+  it('should fetch serving models for the namespace', async () => {
+    const model = {
+      name: 'frauddetection',
+      resourceName: 'frauddetection',
+      kind: 'InferenceService',
+      namespace: 'test-ns',
+      endpoint: 'https://frauddetection-predictor.test-ns.svc.cluster.local:8080/v1',
+      ready: true,
+    };
+    apiMocks.getServingModels.mockReturnValue(jest.fn().mockResolvedValue([model]) as never);
+
+    const renderResult = testHook(useServingModels)('test-ns');
+    await renderResult.waitForNextUpdate();
+
+    const [result, loaded, error] = renderResult.result.current;
+    expect(loaded).toBe(true);
+    expect(error).toBeUndefined();
+    expect(result).toEqual([model]);
+    expect(apiMocks.getServingModels).toHaveBeenCalledWith('', 'test-ns');
+  });
+
+  it('should surface fetch errors', async () => {
+    apiMocks.getServingModels.mockReturnValue(
+      jest.fn().mockRejectedValue(new Error('fetch failed')) as never,
+    );
+
+    const renderResult = testHook(useServingModels)('test-ns');
+    await renderResult.waitForNextUpdate();
+
+    const [, loaded, error] = renderResult.result.current;
+    expect(loaded).toBe(false);
+    expect(error).toEqual(new Error('fetch failed'));
   });
 });

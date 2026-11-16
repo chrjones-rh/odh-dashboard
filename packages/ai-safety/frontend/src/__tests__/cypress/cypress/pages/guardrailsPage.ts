@@ -57,6 +57,18 @@ class GuardrailsPage {
     return cy.findByTestId('guardrail-deployment-submit-button');
   }
 
+  findDeployModelSelect() {
+    return cy.findByTestId('guardrail-deployment-model-select');
+  }
+
+  findDeployModelNameInput() {
+    return cy.findByTestId('guardrail-deployment-model-name-input');
+  }
+
+  findDeployModelEndpointInput() {
+    return cy.findByTestId('guardrail-deployment-model-endpoint-input');
+  }
+
   findDeploymentRow(name: string) {
     return cy.findByTestId(`guardrails-deployment-row-${name}`);
   }

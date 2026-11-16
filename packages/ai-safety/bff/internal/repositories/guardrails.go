@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"regexp"
 	"sort"
 	"strings"
@@ -225,6 +226,12 @@ func (r *GuardrailsRepository) GetDeployment(client k8s.KubernetesClientInterfac
 		NemoConfigs:         nestedNemoConfigs(item),
 		EnvVarNames:         nestedEnvVarNames(item),
 	}
+	for _, source := range detail.ConfigSources {
+		if source.MainModel != "" {
+			detail.MainModel = source.MainModel
+			break
+		}
+	}
 	return detail, nil
 }
 
@@ -244,7 +251,10 @@ func ValidateDeploymentName(name string) error {
 // it copies the template ConfigMap into the target namespace and creates a
 // NemoGuardrails custom resource referencing the copy. The template is read
 // with the internal (service account) client; the copy and the CR are created
-// with the requesting user's client.
+// with the requesting user's client. When the request carries model wiring,
+// the copied config.yaml gains a main model entry and the CR gains the
+// MAIN_MODEL_BASE_URL and MAIN_MODEL_ENGINE environment variables, so
+// requests work with or without a model field.
 func (r *GuardrailsRepository) CreateDeploymentFromTemplate(
 	client k8s.KubernetesClientInterface,
 	internalClient k8s.KubernetesClientInterface,
@@ -254,6 +264,15 @@ func (r *GuardrailsRepository) CreateDeploymentFromTemplate(
 ) (*models.GuardrailDeployment, error) {
 	if err := ValidateDeploymentName(request.Name); err != nil {
 		return nil, err
+	}
+
+	var wiring *models.GuardrailModelWiring
+	if request.Model != nil {
+		validated, err := ValidateModelWiring(request.Model)
+		if err != nil {
+			return nil, err
+		}
+		wiring = validated
 	}
 
 	templateClient, templateNamespace := resolveTemplateClient(
@@ -279,8 +298,50 @@ func (r *GuardrailsRepository) CreateDeploymentFromTemplate(
 		},
 		Data: template.Data,
 	}
+
+	hasModelSpec := false
+	mainModel := ""
+	if wiring != nil {
+		configYAML, ok := configMapCopy.Data[constants.GuardrailsConfigYAMLKey]
+		if !ok {
+			return nil, fmt.Errorf("template %s has no %s to wire the model into", request.TemplateName, constants.GuardrailsConfigYAMLKey)
+		}
+		modified, err := injectMainModel(configYAML, wiring)
+		if err != nil {
+			return nil, fmt.Errorf("error wiring model into template config: %w", err)
+		}
+		configMapCopy.Data[constants.GuardrailsConfigYAMLKey] = modified
+		hasModelSpec = true
+		mainModel = wiring.Name
+	}
+
 	if _, err := client.CreateConfigMap(ctx, request.Namespace, configMapCopy); err != nil {
 		return nil, err
+	}
+
+	spec := map[string]interface{}{
+		"replicas":    int64(1),
+		"exposeRoute": true,
+		"nemoConfigs": []interface{}{
+			map[string]interface{}{
+				"name":       request.Name,
+				"configMaps": []interface{}{configMapName},
+				"default":    true,
+			},
+		},
+	}
+	if wiring != nil {
+		// The server reads these when a request carries a model field.
+		spec["env"] = []interface{}{
+			map[string]interface{}{
+				"name":  constants.MainModelBaseURLEnv,
+				"value": wiring.Endpoint,
+			},
+			map[string]interface{}{
+				"name":  constants.MainModelEngineEnv,
+				"value": constants.MainModelEngineDefault,
+			},
+		}
 	}
 
 	cr := &unstructured.Unstructured{
@@ -296,17 +357,7 @@ func (r *GuardrailsRepository) CreateDeploymentFromTemplate(
 					"security.opendatahub.io/enable-auth": "true",
 				},
 			},
-			"spec": map[string]interface{}{
-				"replicas":    int64(1),
-				"exposeRoute": true,
-				"nemoConfigs": []interface{}{
-					map[string]interface{}{
-						"name":       request.Name,
-						"configMaps": []interface{}{configMapName},
-						"default":    true,
-					},
-				},
-			},
+			"spec": spec,
 		},
 	}
 	createdCR, err := client.CreateNemoGuardrails(ctx, request.Namespace, cr)
@@ -319,12 +370,96 @@ func (r *GuardrailsRepository) CreateDeploymentFromTemplate(
 			Name:               configMapName,
 			Found:              true,
 			Keys:               sortedKeys(template.Data),
-			HasModelSpec:       false,
+			HasModelSpec:       hasModelSpec,
 			IsOperatorTemplate: false,
+			MainModel:          mainModel,
 		},
 	}
 	deployment := newDeploymentModel(createdCR, configSources)
 	return &deployment, nil
+}
+
+// ValidateModelWiring checks the model wiring fields and normalizes the
+// endpoint: it must be a parseable http(s) URL with a host and no embedded
+// credentials, and it gains a /v1 suffix when missing (the OpenAI-compatible
+// path chat completions are served under).
+func ValidateModelWiring(wiring *models.GuardrailModelWiring) (*models.GuardrailModelWiring, error) {
+	name := strings.TrimSpace(wiring.Name)
+	if name == "" {
+		return nil, fmt.Errorf("model name is required when model wiring is provided")
+	}
+	if len(name) > 253 {
+		return nil, fmt.Errorf("model name must be at most 253 characters")
+	}
+
+	endpoint := strings.TrimSpace(wiring.Endpoint)
+	parsed, err := url.Parse(endpoint)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return nil, fmt.Errorf("model endpoint %q is not a valid URL", wiring.Endpoint)
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return nil, fmt.Errorf("model endpoint scheme must be http or https, got %q", parsed.Scheme)
+	}
+	if parsed.User != nil {
+		return nil, fmt.Errorf("model endpoint must not contain credentials")
+	}
+
+	return &models.GuardrailModelWiring{
+		Name:     name,
+		Endpoint: ensureV1Suffix(parsed.String()),
+	}, nil
+}
+
+// injectMainModel writes the main model entry into a NeMo Guardrails
+// config.yaml: an existing model with type "main" is replaced (merging its
+// parameters, mirroring the server's own update logic), otherwise the entry
+// is appended. Other models and configuration keys are preserved.
+func injectMainModel(configYAML string, wiring *models.GuardrailModelWiring) (string, error) {
+	var parsed map[string]interface{}
+	if err := yaml.Unmarshal([]byte(configYAML), &parsed); err != nil {
+		return "", fmt.Errorf("cannot parse config.yaml: %w", err)
+	}
+	if parsed == nil {
+		parsed = map[string]interface{}{}
+	}
+
+	modelsRaw, _ := parsed["models"].([]interface{})
+	entry := map[string]interface{}{
+		"type":       "main",
+		"engine":     constants.MainModelEngineDefault,
+		"model":      wiring.Name,
+		"parameters": map[string]interface{}{"base_url": wiring.Endpoint},
+	}
+
+	replaced := false
+	for i, modelRaw := range modelsRaw {
+		model, ok := modelRaw.(map[string]interface{})
+		if !ok || stringValue(model["type"]) != "main" {
+			continue
+		}
+		parameters, _ := model["parameters"].(map[string]interface{})
+		merged := make(map[string]interface{}, len(parameters)+1)
+		for key, value := range parameters {
+			merged[key] = value
+		}
+		merged["base_url"] = wiring.Endpoint
+		model["engine"] = constants.MainModelEngineDefault
+		model["model"] = wiring.Name
+		model["parameters"] = merged
+		modelsRaw[i] = model
+		replaced = true
+		break
+	}
+	if !replaced {
+		modelsRaw = append(modelsRaw, entry)
+	}
+	parsed["models"] = modelsRaw
+
+	modified, err := yaml.Marshal(parsed)
+	if err != nil {
+		return "", fmt.Errorf("cannot serialize config.yaml: %w", err)
+	}
+	return string(modified), nil
 }
 
 // resolveConfigSources fetches each referenced ConfigMap once and builds the
@@ -342,11 +477,36 @@ func (r *GuardrailsRepository) resolveConfigSources(client k8s.KubernetesClientI
 			if configYAML, ok := configMap.Data[constants.GuardrailsConfigYAMLKey]; ok {
 				summary := parseConfigSummary(configYAML)
 				source.HasModelSpec = summary.ModelCount > 0
+				source.MainModel = mainModelNameFromConfig(configYAML)
 			}
 		}
 		sources[name] = source
 	}
 	return sources
+}
+
+// mainModelNameFromConfig extracts the model name of the first type "main"
+// entry in a NeMo Guardrails config.yaml. Missing or unparsable configs yield
+// an empty string.
+func mainModelNameFromConfig(configYAML string) string {
+	var parsed map[string]interface{}
+	if err := yaml.Unmarshal([]byte(configYAML), &parsed); err != nil {
+		return ""
+	}
+	modelsRaw, ok := parsed["models"].([]interface{})
+	if !ok {
+		return ""
+	}
+	for _, modelRaw := range modelsRaw {
+		model, ok := modelRaw.(map[string]interface{})
+		if !ok || stringValue(model["type"]) != "main" {
+			continue
+		}
+		if name := strings.TrimSpace(stringValue(model["model"])); name != "" {
+			return name
+		}
+	}
+	return ""
 }
 
 func newTemplateModel(configMap *corev1.ConfigMap) models.GuardrailTemplate {
@@ -390,6 +550,7 @@ func newDeploymentModel(item *unstructured.Unstructured, configSources map[strin
 		Namespace:     item.GetNamespace(),
 		Phase:         phase,
 		Ready:         isDeploymentReady(item),
+		ModelWired:    hasMainModelBaseURL(item),
 		Endpoint:      endpoint,
 		CreatedAt:     item.GetCreationTimestamp().UTC().Format(time.RFC3339),
 		Conditions:    nestedConditions(item),
@@ -402,10 +563,27 @@ func newDeploymentModel(item *unstructured.Unstructured, configSources map[strin
 
 	names := referencedConfigMapNames(item)
 	for _, name := range names {
-		deployment.ConfigSources = append(deployment.ConfigSources, configSources[name])
+		source := configSources[name]
+		deployment.ConfigSources = append(deployment.ConfigSources, source)
+		// A config-side main model also makes the deployment testable: the
+		// server accepts requests without a model field through it.
+		if source.MainModel != "" {
+			deployment.ModelWired = true
+		}
 	}
 
 	return deployment
+}
+
+// hasMainModelBaseURL reports whether the CR spec carries the
+// MAIN_MODEL_BASE_URL environment variable (name only; values are never read).
+func hasMainModelBaseURL(item *unstructured.Unstructured) bool {
+	for _, name := range nestedEnvVarNames(item) {
+		if name == constants.MainModelBaseURLEnv {
+			return true
+		}
+	}
+	return false
 }
 
 func isDeploymentReady(item *unstructured.Unstructured) bool {

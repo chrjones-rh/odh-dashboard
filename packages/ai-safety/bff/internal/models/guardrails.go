@@ -59,6 +59,7 @@ type GuardrailConfigSource struct {
 	Keys               []string `json:"keys,omitempty"`
 	HasModelSpec       bool     `json:"hasModelSpec,omitempty"`
 	IsOperatorTemplate bool     `json:"isOperatorTemplate,omitempty"`
+	MainModel          string   `json:"mainModel,omitempty"`
 }
 
 // GuardrailDeployment is a NemoGuardrails deployment in a namespace.
@@ -67,6 +68,7 @@ type GuardrailDeployment struct {
 	Namespace     string                  `json:"namespace"`
 	Phase         string                  `json:"phase"`
 	Ready         bool                    `json:"ready"`
+	ModelWired    bool                    `json:"modelWired"`
 	Endpoint      string                  `json:"endpoint,omitempty"`
 	Replicas      *int64                  `json:"replicas,omitempty"`
 	CreatedAt     string                  `json:"createdAt"`
@@ -87,13 +89,42 @@ type GuardrailDeploymentDetail struct {
 	ExposeRoute bool                  `json:"exposeRoute,omitempty"`
 	EnvVarNames []string              `json:"envVarNames,omitempty"`
 	NemoConfigs []GuardrailNemoConfig `json:"nemoConfigs,omitempty"`
+	MainModel   string                `json:"mainModel,omitempty"`
+}
+
+// GuardrailModelWiring captures the model a guardrail deployment is wired to:
+// the served model name used in requests and the OpenAI-compatible base URL
+// (including the /v1 suffix) the guardrail proxies to.
+type GuardrailModelWiring struct {
+	Name     string `json:"name"`
+	Endpoint string `json:"endpoint"`
 }
 
 // GuardrailDeploymentCreateRequest is the request body for deploying a guardrail
-// template into a namespace.
+// template into a namespace. The optional Model wires the deployment to a
+// serving model: it sets MAIN_MODEL_BASE_URL on the CR and injects a main
+// model entry into the copied config.yaml.
 type GuardrailDeploymentCreateRequest struct {
-	Name              string `json:"name"`
-	Namespace         string `json:"namespace"`
-	TemplateName      string `json:"templateName"`
-	TemplateNamespace string `json:"templateNamespace,omitempty"`
+	Name              string                `json:"name"`
+	Namespace         string                `json:"namespace"`
+	TemplateName      string                `json:"templateName"`
+	TemplateNamespace string                `json:"templateNamespace,omitempty"`
+	Model             *GuardrailModelWiring `json:"model,omitempty"`
+}
+
+// ServingModel is a model served in a namespace that a guardrail deployment
+// can be wired to.
+type ServingModel struct {
+	// Name is the model name to send in the request "model" field.
+	Name string `json:"name"`
+	// ResourceName is the name of the serving kubernetes resource.
+	ResourceName string `json:"resourceName"`
+	// Kind is the serving resource kind (InferenceService or LLMInferenceService).
+	Kind string `json:"kind"`
+	// Namespace is the namespace the serving resource lives in.
+	Namespace string `json:"namespace"`
+	// Endpoint is the in-cluster OpenAI-compatible base URL (including /v1).
+	Endpoint string `json:"endpoint,omitempty"`
+	// Ready reports whether the serving resource reports a Ready condition.
+	Ready bool `json:"ready"`
 }

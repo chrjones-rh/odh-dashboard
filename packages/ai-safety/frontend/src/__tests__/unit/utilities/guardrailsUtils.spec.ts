@@ -24,6 +24,7 @@ describe('getDeploymentStatus', () => {
     namespace: 'test-ns',
     phase,
     ready,
+    modelWired: true,
     createdAt: '2026-01-01T00:00:00Z',
     conditions: [],
     configSources: [],

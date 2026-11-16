@@ -142,6 +142,26 @@ func (kc *TokenKubernetesClient) CanListConfigMaps(ctx context.Context, _ *Reque
 	return kc.selfSubjectAccessReview(ctx, "list", "", "configmaps", namespace)
 }
 
+// CanListInferenceServices performs a SelfSubjectAccessReview for the token
+// user against KServe InferenceServices in the namespace.
+// RequestIdentity is unused because the token already represents the user identity.
+func (kc *TokenKubernetesClient) CanListInferenceServices(ctx context.Context, _ *RequestIdentity, namespace string) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	return kc.selfSubjectAccessReview(ctx, "list", constants.KServeAPIGroup, constants.InferenceServicePlural, namespace)
+}
+
+// CanListLLMInferenceServices performs a SelfSubjectAccessReview for the token
+// user against KServe LLMInferenceServices in the namespace.
+// RequestIdentity is unused because the token already represents the user identity.
+func (kc *TokenKubernetesClient) CanListLLMInferenceServices(ctx context.Context, _ *RequestIdentity, namespace string) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	return kc.selfSubjectAccessReview(ctx, "list", constants.KServeAPIGroup, constants.LLMInferenceServicePlural, namespace)
+}
+
 // CanDeleteNemoGuardrails performs a SelfSubjectAccessReview for the token
 // user against NemoGuardrails deletion in the namespace.
 // RequestIdentity is unused because the token already represents the user identity.

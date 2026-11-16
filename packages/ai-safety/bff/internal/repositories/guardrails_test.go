@@ -2,6 +2,7 @@ package repositories
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -21,13 +22,47 @@ import (
 type fakeGuardrailsClient struct {
 	kubernetes.KubernetesClientInterface
 
-	configMaps     []corev1.ConfigMap
-	nemoGuardrails []unstructured.Unstructured
-	allowList      bool
-	allowCreate    bool
+	configMaps            []corev1.ConfigMap
+	nemoGuardrails        []unstructured.Unstructured
+	inferenceServices     []unstructured.Unstructured
+	llmInferenceServices  []unstructured.Unstructured
+	forbidInferenceList   bool
+	forbidLLMInferenceList bool
+	allowList             bool
+	allowCreate           bool
 
 	createdConfigMaps     []corev1.ConfigMap
 	createdNemoGuardrails []unstructured.Unstructured
+}
+
+func (f *fakeGuardrailsClient) ListInferenceServices(_ context.Context, namespace string) ([]unstructured.Unstructured, error) {
+	if f.forbidInferenceList {
+		return nil, apierrors.NewForbidden(schema.GroupResource{Group: "serving.kserve.io", Resource: "inferenceservices"}, namespace, errors.New("forbidden"))
+	}
+	var result []unstructured.Unstructured
+	for _, item := range f.inferenceServices {
+		if item.GetNamespace() == namespace {
+			result = append(result, item)
+		}
+	}
+	return result, nil
+}
+
+func (f *fakeGuardrailsClient) ListLLMInferenceServices(_ context.Context, namespace string) ([]unstructured.Unstructured, error) {
+	if f.forbidLLMInferenceList {
+		return nil, apierrors.NewForbidden(schema.GroupResource{Group: "serving.kserve.io", Resource: "llminferenceservices"}, namespace, errors.New("forbidden"))
+	}
+	var result []unstructured.Unstructured
+	for _, item := range f.llmInferenceServices {
+		if item.GetNamespace() == namespace {
+			result = append(result, item)
+		}
+	}
+	return result, nil
+}
+
+func (f *fakeGuardrailsClient) BearerToken() (string, error) {
+	return "test-token", nil
 }
 
 func (f *fakeGuardrailsClient) ListConfigMapsByLabel(_ context.Context, namespace string, labelSelector string) ([]corev1.ConfigMap, error) {

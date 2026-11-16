@@ -77,6 +77,7 @@ export type GuardrailConfigSource = {
   keys?: string[];
   hasModelSpec?: boolean;
   isOperatorTemplate?: boolean;
+  mainModel?: string;
 };
 
 export type GuardrailDeployment = {
@@ -84,6 +85,7 @@ export type GuardrailDeployment = {
   namespace: string;
   phase: string;
   ready: boolean;
+  modelWired: boolean;
   endpoint?: string;
   replicas?: number;
   createdAt: string;
@@ -101,6 +103,12 @@ export type GuardrailDeploymentDetail = GuardrailDeployment & {
   exposeRoute?: boolean;
   envVarNames?: string[];
   nemoConfigs?: GuardrailNemoConfig[];
+  mainModel?: string;
+};
+
+export type GuardrailModelWiring = {
+  name: string;
+  endpoint: string;
 };
 
 export type GuardrailDeploymentCreateRequest = {
@@ -108,4 +116,14 @@ export type GuardrailDeploymentCreateRequest = {
   namespace: string;
   templateName: string;
   templateNamespace?: string;
+  model?: GuardrailModelWiring;
+};
+
+export type ServingModel = {
+  name: string;
+  resourceName: string;
+  kind: 'InferenceService' | 'LLMInferenceService';
+  namespace: string;
+  endpoint?: string;
+  ready: boolean;
 };

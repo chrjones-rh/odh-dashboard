@@ -24,6 +24,20 @@ var nemoGuardrailsGVR = schema.GroupVersionResource{
 	Resource: constants.NemoGuardrailsPlural,
 }
 
+// inferenceServiceGVR is the GroupVersionResource of the KServe InferenceService.
+var inferenceServiceGVR = schema.GroupVersionResource{
+	Group:    constants.KServeAPIGroup,
+	Version:  constants.InferenceServiceAPIVersion,
+	Resource: constants.InferenceServicePlural,
+}
+
+// llmInferenceServiceGVR is the GroupVersionResource of the KServe LLMInferenceService.
+var llmInferenceServiceGVR = schema.GroupVersionResource{
+	Group:    constants.KServeAPIGroup,
+	Version:  constants.LLMInferenceServiceAPIVersion,
+	Resource: constants.LLMInferenceServicePlural,
+}
+
 type SharedClientLogic struct {
 	Client kubernetes.Interface
 	Logger *slog.Logger
@@ -139,6 +153,31 @@ func (kc *SharedClientLogic) DeleteConfigMap(ctx context.Context, namespace stri
 		return fmt.Errorf("failed to delete configmap %s in namespace %s: %w", name, namespace, err)
 	}
 	return nil
+}
+
+// listDynamic lists an arbitrary namespaced resource via the dynamic client.
+func (kc *SharedClientLogic) listDynamic(ctx context.Context, gvr schema.GroupVersionResource, namespace string) ([]unstructured.Unstructured, error) {
+	if kc.DynamicClient == nil {
+		return nil, fmt.Errorf("dynamic kubernetes client is not available")
+	}
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	list, err := kc.DynamicClient.Resource(gvr).Namespace(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list %s in namespace %s: %w", gvr.Resource, namespace, err)
+	}
+	return list.Items, nil
+}
+
+// ListInferenceServices lists KServe InferenceServices in the namespace.
+func (kc *SharedClientLogic) ListInferenceServices(ctx context.Context, namespace string) ([]unstructured.Unstructured, error) {
+	return kc.listDynamic(ctx, inferenceServiceGVR, namespace)
+}
+
+// ListLLMInferenceServices lists KServe LLMInferenceServices in the namespace.
+func (kc *SharedClientLogic) ListLLMInferenceServices(ctx context.Context, namespace string) ([]unstructured.Unstructured, error) {
+	return kc.listDynamic(ctx, llmInferenceServiceGVR, namespace)
 }
 
 // canCreateGuardrailDeployment performs the authorization reviews shared by

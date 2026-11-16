@@ -5,12 +5,14 @@ import {
   getGuardrailDeployments,
   getGuardrailTemplate,
   getGuardrailTemplates,
+  getServingModels,
 } from '~/app/api/guardrails';
 import {
   GuardrailDeployment,
   GuardrailDeploymentDetail,
   GuardrailTemplate,
   GuardrailTemplateDetail,
+  ServingModel,
 } from '~/app/types';
 
 export const useGuardrailTemplates = (
@@ -68,4 +70,19 @@ export const useGuardrailDeployment = (
     [namespace, name],
   );
   return useFetchState<GuardrailDeploymentDetail | null>(callback, null);
+};
+
+export const useServingModels = (
+  namespace: string,
+): [ServingModel[], boolean, Error | undefined, () => void] => {
+  const callback = React.useCallback<FetchStateCallbackPromise<ServingModel[]>>(
+    (opts: APIOptions) => {
+      if (!namespace) {
+        return Promise.resolve([]);
+      }
+      return getServingModels('', namespace)(opts);
+    },
+    [namespace],
+  );
+  return useFetchState<ServingModel[]>(callback, []);
 };

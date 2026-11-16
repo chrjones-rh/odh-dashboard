@@ -3,6 +3,7 @@ import type {
   GuardrailDeploymentDetail,
   GuardrailTemplate,
   GuardrailTemplateDetail,
+  ServingModel,
 } from '~/app/types';
 
 export const mockGuardrailTemplate = (options?: Partial<GuardrailTemplate>): GuardrailTemplate => ({
@@ -46,6 +47,7 @@ export const mockGuardrailDeployment = (
   namespace: 'test-namespace',
   phase: 'Ready',
   ready: true,
+  modelWired: true,
   endpoint: 'https://my-guardrails.test-namespace.svc.cluster.local',
   replicas: 1,
   createdAt: '2026-01-15T10:30:00Z',
@@ -83,5 +85,15 @@ export const mockGuardrailDeploymentDetail = (
       default: true,
     },
   ],
+  ...options,
+});
+
+export const mockServingModel = (options?: Partial<ServingModel>): ServingModel => ({
+  name: 'my-model',
+  resourceName: 'my-model',
+  kind: 'InferenceService',
+  namespace: 'test-namespace',
+  endpoint: 'https://my-model-predictor.test-namespace.svc.cluster.local:8080/v1',
+  ready: true,
   ...options,
 });

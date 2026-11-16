@@ -6,6 +6,7 @@ import {
   mockGuardrailDeploymentDetail,
   mockGuardrailTemplate,
   mockGuardrailTemplateDetail,
+  mockServingModel,
 } from '~/__mocks__/mockGuardrails';
 import { guardrailsPage } from '~/__tests__/cypress/cypress/pages/guardrailsPage';
 import { CLIENT_API_VERSION } from '~/__tests__/cypress/cypress/support/commands/api';
@@ -15,6 +16,7 @@ type HandlersProps = {
   templates?: ReturnType<typeof mockGuardrailTemplate>[];
   userTemplates?: ReturnType<typeof mockGuardrailTemplate>[];
   deployments?: ReturnType<typeof mockGuardrailDeployment>[];
+  servingModels?: ReturnType<typeof mockServingModel>[];
 };
 
 const TEST_NAMESPACE = 'test-namespace';
@@ -51,6 +53,7 @@ const initIntercepts = ({
     }),
   ],
   deployments = [mockGuardrailDeployment({})],
+  servingModels = [mockServingModel({})],
 }: HandlersProps = {}) => {
   cy.interceptApi(
     'GET /api/:apiVersion/user',
@@ -134,6 +137,20 @@ const initIntercepts = ({
       },
     },
     mockGuardrailDeploymentDetail({}),
+  );
+
+  // Serving models for the deploy modal's model wiring section.
+  cy.interceptApi(
+    'GET /api/:apiVersion/models',
+    {
+      path: {
+        apiVersion: CLIENT_API_VERSION,
+      },
+      query: {
+        namespace: TEST_NAMESPACE,
+      },
+    },
+    servingModels,
   );
 };
 
@@ -369,5 +386,50 @@ describe('Guardrails', () => {
     guardrailsPage.findDeployModal().should('exist');
     guardrailsPage.findDeployNameInput().type('Invalid Name');
     guardrailsPage.findDeploySubmitButton().should('be.disabled');
+  });
+
+  it('should wire a model when deploying a template', () => {
+    initIntercepts({});
+    guardrailsPage.visit();
+
+    guardrailsPage.findDeployButton('default-pii').click();
+    guardrailsPage.findDeployModal().should('exist');
+    guardrailsPage.findDeployNameInput().type('my-wired-guardrail');
+
+    // Select the served model; the wiring fields prefill from the selection.
+    // The option's accessible name includes the kind description, so match
+    // partially.
+    guardrailsPage.findDeployModelSelect().click();
+    cy.findByRole('option', { name: /my-model/ }).click();
+    guardrailsPage.findDeployModelNameInput().should('have.value', 'my-model');
+    guardrailsPage
+      .findDeployModelEndpointInput()
+      .should('have.value', 'https://my-model-predictor.test-namespace.svc.cluster.local:8080/v1');
+
+    cy.interceptApi(
+      'POST /api/:apiVersion/guardrails/deployments',
+      {
+        path: {
+          apiVersion: CLIENT_API_VERSION,
+        },
+      },
+      mockGuardrailDeployment({ name: 'my-wired-guardrail' }),
+    ).as('createWiredDeployment');
+
+    guardrailsPage.findDeploySubmitButton().should('be.enabled');
+    guardrailsPage.findDeploySubmitButton().click();
+
+    cy.wait('@createWiredDeployment').then((interception) => {
+      expect(interception.request.body).to.eql({
+        name: 'my-wired-guardrail',
+        namespace: TEST_NAMESPACE,
+        templateName: 'trustyai-service-operator-nemo-guardrails-default-pii',
+        templateNamespace: 'redhat-ods-applications',
+        model: {
+          name: 'my-model',
+          endpoint: 'https://my-model-predictor.test-namespace.svc.cluster.local:8080/v1',
+        },
+      });
+    });
   });
 });

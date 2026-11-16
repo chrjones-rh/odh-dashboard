@@ -28,11 +28,13 @@ import (
 // KubernetesClientInterface, backed by in-memory data.
 type guardrailsFakeClient struct {
 	kubernetes.KubernetesClientInterface
-	configMaps     []corev1.ConfigMap
-	nemoGuardrails []unstructured.Unstructured
-	allowList      bool
-	allowCreate    bool
-	allowDelete    bool
+	configMaps           []corev1.ConfigMap
+	nemoGuardrails       []unstructured.Unstructured
+	inferenceServices    []unstructured.Unstructured
+	llmInferenceServices []unstructured.Unstructured
+	allowList            bool
+	allowCreate          bool
+	allowDelete          bool
 }
 
 func (f *guardrailsFakeClient) ListConfigMapsByLabel(_ context.Context, namespace string, labelSelector string) ([]corev1.ConfigMap, error) {
@@ -80,6 +82,23 @@ func (f *guardrailsFakeClient) GetNemoGuardrails(_ context.Context, namespace st
 func (f *guardrailsFakeClient) CanListNemoGuardrails(_ context.Context, _ *kubernetes.RequestIdentity, _ string) (bool, error) {
 	return f.allowList, nil
 }
+
+func (f *guardrailsFakeClient) ListInferenceServices(_ context.Context, _ string) ([]unstructured.Unstructured, error) {
+	return f.inferenceServices, nil
+}
+
+func (f *guardrailsFakeClient) ListLLMInferenceServices(_ context.Context, _ string) ([]unstructured.Unstructured, error) {
+	return f.llmInferenceServices, nil
+}
+
+func (f *guardrailsFakeClient) CanListInferenceServices(_ context.Context, _ *kubernetes.RequestIdentity, _ string) (bool, error) {
+	return f.allowList, nil
+}
+
+func (f *guardrailsFakeClient) CanListLLMInferenceServices(_ context.Context, _ *kubernetes.RequestIdentity, _ string) (bool, error) {
+	return f.allowList, nil
+}
+
 
 func (f *guardrailsFakeClient) CanListConfigMaps(_ context.Context, _ *kubernetes.RequestIdentity, _ string) (bool, error) {
 	return f.allowList, nil
@@ -552,3 +571,185 @@ func TestDeleteGuardrailDeploymentHandlerNotFound(t *testing.T) {
 		t, http.MethodDelete, "/api/v1/guardrails/deployments/missing?namespace=test-ns", true)
 	assert.Equal(t, http.StatusNotFound, recorder.Code)
 }
+
+// performGuardrailsRequest runs a request against an App wired to the given
+// fake client and returns the recorder, the decoded body, and the client.
+func performGuardrailsRequest(
+	t *testing.T,
+	client *guardrailsFakeClient,
+	method, url string,
+	requestBody map[string]interface{},
+) (*httptest.ResponseRecorder, map[string]interface{}) {
+	t.Helper()
+
+	app := &App{
+		config: config.EnvConfig{
+			AllowedOrigins:              []string{"*"},
+			AuthMethod:                  config.AuthMethodInternal,
+			GuardrailsTemplateNamespace: "redhat-ods-applications",
+		},
+		logger:                  slog.New(slog.NewTextHandler(io.Discard, nil)),
+		kubernetesClientFactory: &guardrailsFakeFactory{client: client},
+		repositories:            repositories.NewRepositories(),
+	}
+
+	var reqBody io.Reader
+	if requestBody != nil {
+		encoded, err := json.Marshal(requestBody)
+		require.NoError(t, err)
+		reqBody = bytes.NewReader(encoded)
+	}
+	req, err := http.NewRequest(method, url, reqBody)
+	require.NoError(t, err)
+	req.Header.Set(constants.KubeflowUserIDHeader, "test-user")
+	if requestBody != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+
+	identity := &kubernetes.RequestIdentity{UserID: "test-user", Groups: []string{}}
+	ctx := context.WithValue(req.Context(), constants.RequestIdentityKey, identity)
+	req = req.WithContext(ctx)
+
+	recorder := httptest.NewRecorder()
+	app.Routes().ServeHTTP(recorder, req)
+
+	var body map[string]interface{}
+	if recorder.Code == http.StatusOK || recorder.Code == http.StatusCreated {
+		err = json.Unmarshal(recorder.Body.Bytes(), &body)
+		require.NoError(t, err)
+	}
+	return recorder, body
+}
+
+func guardrailsTestInferenceServices() []unstructured.Unstructured {
+	return []unstructured.Unstructured{
+		{
+			Object: map[string]interface{}{
+				"apiVersion": "serving.kserve.io/v1beta1",
+				"kind":       "InferenceService",
+				"metadata": map[string]interface{}{
+					"namespace": "test-ns",
+					"name":      "frauddetection",
+					"annotations": map[string]interface{}{
+						"security.opendatahub.io/enable-auth": "true",
+					},
+				},
+				"status": map[string]interface{}{
+					"address": map[string]interface{}{"url": "https://frauddetection-predictor.test-ns.svc.cluster.local:8080"},
+					"conditions": []interface{}{
+						map[string]interface{}{"type": "Ready", "status": "True"},
+					},
+				},
+			},
+		},
+	}
+}
+
+func TestGetServingModelsHandler(t *testing.T) {
+	client := &guardrailsFakeClient{
+		inferenceServices: guardrailsTestInferenceServices(),
+		allowList:         true,
+	}
+
+	recorder, body := performGuardrailsRequest(t, client, http.MethodGet, "/api/v1/models?namespace=test-ns", nil)
+	require.Equal(t, http.StatusOK, recorder.Code)
+
+	data, ok := body["data"].([]interface{})
+	require.True(t, ok, "expected data array in response")
+	require.Len(t, data, 1)
+
+	model := data[0].(map[string]interface{})
+	assert.Equal(t, "frauddetection", model["name"])
+	assert.Equal(t, "InferenceService", model["kind"])
+	assert.Equal(t, "https://frauddetection-predictor.test-ns.svc.cluster.local:8080/v1", model["endpoint"])
+	assert.Equal(t, true, model["ready"])
+}
+
+func TestGetServingModelsHandlerForbidden(t *testing.T) {
+	client := &guardrailsFakeClient{
+		inferenceServices: guardrailsTestInferenceServices(),
+		allowList:         false,
+	}
+
+	recorder, _ := performGuardrailsRequest(t, client, http.MethodGet, "/api/v1/models?namespace=test-ns", nil)
+	assert.Equal(t, http.StatusForbidden, recorder.Code)
+}
+
+func TestGetServingModelsHandlerMissingNamespace(t *testing.T) {
+	client := &guardrailsFakeClient{allowList: true}
+	recorder, _ := performGuardrailsRequest(t, client, http.MethodGet, "/api/v1/models", nil)
+	assert.Equal(t, http.StatusBadRequest, recorder.Code)
+}
+
+func TestCreateGuardrailDeploymentHandlerWithModel(t *testing.T) {
+	client := &guardrailsFakeClient{
+		configMaps:  guardrailsTestConfigMaps(),
+		allowList:   true,
+		allowCreate: true,
+	}
+
+	requestBody := map[string]interface{}{
+		"name":         "wired-guardrail",
+		"namespace":    "test-ns",
+		"templateName": "trustyai-service-operator-nemo-guardrails-default-pii",
+		"model": map[string]interface{}{
+			"name":     "my-model",
+			"endpoint": "https://my-model.test-ns.svc.cluster.local:8000",
+		},
+	}
+	recorder, body := performGuardrailsRequest(t, client, http.MethodPost, "/api/v1/guardrails/deployments", requestBody)
+	require.Equal(t, http.StatusCreated, recorder.Code)
+
+	data, ok := body["data"].(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, true, data["modelWired"])
+
+	// The CR carries the model wiring environment variables.
+	var created *unstructured.Unstructured
+	for i := range client.nemoGuardrails {
+		if client.nemoGuardrails[i].GetName() == "wired-guardrail" {
+			created = &client.nemoGuardrails[i]
+		}
+	}
+	require.NotNil(t, created)
+	env, found, err := unstructured.NestedSlice(created.Object, "spec", "env")
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Len(t, env, 2)
+	assert.Equal(t, map[string]interface{}{"name": "MAIN_MODEL_BASE_URL", "value": "https://my-model.test-ns.svc.cluster.local:8000/v1"}, env[0])
+	assert.Equal(t, map[string]interface{}{"name": "MAIN_MODEL_ENGINE", "value": "openai"}, env[1])
+
+	// The copied ConfigMap's config.yaml gained a main model entry.
+	var copied *corev1.ConfigMap
+	for i := range client.configMaps {
+		if client.configMaps[i].Namespace == "test-ns" && client.configMaps[i].Name == "guardrail-wired-guardrail" {
+			copied = &client.configMaps[i]
+		}
+	}
+	require.NotNil(t, copied)
+	configYAML := copied.Data["config.yaml"]
+	assert.Contains(t, configYAML, "model: my-model")
+	assert.Contains(t, configYAML, "base_url: https://my-model.test-ns.svc.cluster.local:8000/v1")
+	assert.Contains(t, configYAML, "mask pii", "template rails must be preserved")
+}
+
+func TestCreateGuardrailDeploymentHandlerInvalidModel(t *testing.T) {
+	client := &guardrailsFakeClient{
+		configMaps:  guardrailsTestConfigMaps(),
+		allowList:   true,
+		allowCreate: true,
+	}
+
+	requestBody := map[string]interface{}{
+		"name":         "wired-guardrail",
+		"namespace":    "test-ns",
+		"templateName": "trustyai-service-operator-nemo-guardrails-default-pii",
+		"model": map[string]interface{}{
+			"name":     "my-model",
+			"endpoint": "not a url",
+		},
+	}
+	recorder, _ := performGuardrailsRequest(t, client, http.MethodPost, "/api/v1/guardrails/deployments", requestBody)
+	assert.Equal(t, http.StatusBadRequest, recorder.Code)
+}
+

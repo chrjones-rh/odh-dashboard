@@ -130,141 +130,6 @@ paths:
       operationId: getGuardrailTemplate
       summary: Get Guardrail Template
       description: Returns a single guardrail configuration template with its full file contents.
-  /api/v1/guardrails/deployments:
-    summary: Path used to list NemoGuardrails deployments in a namespace.
-    get:
-      tags:
-        - Guardrails
-      parameters:
-        - $ref: '#/components/parameters/namespace'
-      responses:
-        '200':
-          description: 'Ok'
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  data:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/GuardrailDeployment'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '500':
-          $ref: '#/components/responses/InternalServerError'
-      operationId: getGuardrailDeployments
-      summary: Get Guardrails Deployments
-      description: >-
-        Returns the NemoGuardrails deployments in the given namespace, including
-        status and the configuration source (template ConfigMap vs custom YAML).
-    post:
-      tags:
-        - Guardrails
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/GuardrailDeploymentCreateRequest'
-      responses:
-        '201':
-          description: 'Created'
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  data:
-                    $ref: '#/components/schemas/GuardrailDeployment'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '409':
-          $ref: '#/components/responses/ConflictResponse'
-        '500':
-          $ref: '#/components/responses/InternalServerError'
-      operationId: createGuardrailDeployment
-      summary: Deploy a Guardrail Template
-      description: >-
-        Copies the given guardrail template ConfigMap into the target namespace
-        and creates a NemoGuardrails custom resource referencing it. Requires
-        permission to create configmaps and nemoguardrails in the namespace.
-  /api/v1/guardrails/deployments/{name}:
-    summary: Path used to get a single NemoGuardrails deployment.
-    get:
-      tags:
-        - Guardrails
-      parameters:
-        - name: name
-          description: Name of the NemoGuardrails custom resource.
-          schema:
-            type: string
-          in: path
-          required: true
-        - $ref: '#/components/parameters/namespace'
-      responses:
-        '200':
-          description: 'Ok'
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  data:
-                    $ref: '#/components/schemas/GuardrailDeploymentDetail'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '500':
-          $ref: '#/components/responses/InternalServerError'
-      operationId: getGuardrailDeployment
-      summary: Get Guardrails Deployment
-      description: Returns a single NemoGuardrails deployment with its full specification.
-    delete:
-      tags:
-        - Guardrails
-      parameters:
-        - name: name
-          description: Name of the NemoGuardrails custom resource.
-          schema:
-            type: string
-          in: path
-          required: true
-        - $ref: '#/components/parameters/namespace'
-      responses:
-        '204':
-          description: 'No Content - the deployment was deleted'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '500':
-          $ref: '#/components/responses/InternalServerError'
-      operationId: deleteGuardrailDeployment
-      summary: Delete Guardrails Deployment
-      description: >-
-        Deletes the NemoGuardrails deployment and the dashboard-created
-        ConfigMap copies for it. Requires permission to delete nemoguardrails
-        in the namespace. User-managed ConfigMaps are never deleted.
 components:
   schemas:
     Config:
@@ -606,6 +471,10 @@ components:
         isOperatorTemplate:
           description: Whether the ConfigMap is managed by the trustyai-service-operator.
           type: boolean
+        mainModel:
+          description: >-
+            Model name of the config.yaml main model entry, when present.
+          type: string
     GuardrailDeployment:
       description: A NemoGuardrails deployment in a namespace.
       type: object
@@ -614,6 +483,7 @@ components:
         - namespace
         - phase
         - ready
+        - modelWired
         - createdAt
         - conditions
         - configSources
@@ -629,6 +499,11 @@ components:
           type: string
         ready:
           description: Whether the DeploymentReady condition is True.
+          type: boolean
+        modelWired:
+          description: >-
+            Whether the deployment is wired to a model (MAIN_MODEL_BASE_URL
+            environment variable or a config.yaml main model entry).
           type: boolean
         endpoint:
           description: In-cluster endpoint reported by the operator, when available.
@@ -668,6 +543,11 @@ components:
               type: array
               items:
                 $ref: '#/components/schemas/GuardrailNemoConfig'
+            mainModel:
+              description: >-
+                Model name of the deployment's configured main model, when
+                present in its configuration.
+              type: string
     GuardrailNemoConfig:
       description: A single nemoConfigs entry of a NemoGuardrails resource.
       type: object
@@ -709,6 +589,60 @@ components:
           description: Name of the guardrail template ConfigMap to deploy from.
           type: string
           example: trustyai-service-operator-nemo-guardrails-default-pii
+        model:
+          description: >-
+            Optional model wiring. When set, the deployment's config.yaml gains
+            a main model entry and the CR gains MAIN_MODEL_BASE_URL and
+            MAIN_MODEL_ENGINE environment variables.
+          allOf:
+            - $ref: '#/components/schemas/GuardrailModelWiring'
+    GuardrailModelWiring:
+      description: The model a guardrail deployment is wired to.
+      type: object
+      required:
+        - name
+        - endpoint
+      properties:
+        name:
+          description: >-
+            Served model name used in the request model field and the
+            config.yaml main model entry.
+          type: string
+          example: Qwen/Qwen3-VL-30B-A3B-Instruct
+        endpoint:
+          description: >-
+            OpenAI-compatible base URL of the model server, including the /v1
+            suffix.
+          type: string
+          example: https://my-model-predictor.my-project.svc.cluster.local:8080/v1
+    ServingModel:
+      description: A model served in a namespace that a guardrail can be wired to.
+      type: object
+      required:
+        - name
+        - resourceName
+        - kind
+        - namespace
+        - ready
+      properties:
+        name:
+          description: Model name to send in the request model field.
+          type: string
+        resourceName:
+          description: Name of the serving kubernetes resource.
+          type: string
+        kind:
+          description: Serving resource kind (InferenceService or LLMInferenceService).
+          type: string
+        namespace:
+          description: Namespace the serving resource lives in.
+          type: string
+        endpoint:
+          description: In-cluster OpenAI-compatible base URL (including /v1), when resolvable.
+          type: string
+        ready:
+          description: Whether the serving resource reports a Ready condition.
+          type: boolean
     SortOrder:
       description: Supported sort direction for ordering result entities.
       enum:

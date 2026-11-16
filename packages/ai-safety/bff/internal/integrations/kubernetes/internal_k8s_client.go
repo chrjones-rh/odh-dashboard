@@ -94,6 +94,24 @@ func (kc *InternalKubernetesClient) CanListConfigMaps(ctx context.Context, ident
 	return kc.subjectAccessReview(ctx, identity, "list", "", "configmaps", namespace)
 }
 
+// CanListInferenceServices performs a SubjectAccessReview for the request
+// identity against KServe InferenceServices in the namespace.
+func (kc *InternalKubernetesClient) CanListInferenceServices(ctx context.Context, identity *RequestIdentity, namespace string) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	return kc.subjectAccessReview(ctx, identity, "list", constants.KServeAPIGroup, constants.InferenceServicePlural, namespace)
+}
+
+// CanListLLMInferenceServices performs a SubjectAccessReview for the request
+// identity against KServe LLMInferenceServices in the namespace.
+func (kc *InternalKubernetesClient) CanListLLMInferenceServices(ctx context.Context, identity *RequestIdentity, namespace string) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	return kc.subjectAccessReview(ctx, identity, "list", constants.KServeAPIGroup, constants.LLMInferenceServicePlural, namespace)
+}
+
 // CanDeleteNemoGuardrails performs a SubjectAccessReview for the request
 // identity against NemoGuardrails deletion in the namespace.
 func (kc *InternalKubernetesClient) CanDeleteNemoGuardrails(ctx context.Context, identity *RequestIdentity, namespace string) (bool, error) {

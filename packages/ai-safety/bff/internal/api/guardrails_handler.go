@@ -21,6 +21,58 @@ type GuardrailTemplateEnvelope Envelope[models.GuardrailTemplateDetail, None]
 type GuardrailDeploymentsEnvelope Envelope[[]models.GuardrailDeployment, None]
 type GuardrailDeploymentEnvelope Envelope[models.GuardrailDeploymentDetail, None]
 type CreatedGuardrailDeploymentEnvelope Envelope[models.GuardrailDeployment, None]
+type ServingModelsEnvelope Envelope[[]models.ServingModel, None]
+
+// GetServingModelsHandler lists the models served in the requested namespace
+// that a guardrail deployment can be wired to. Access is gated by
+// SelfSubjectAccessReviews for the KServe serving resources; when the user may
+// list neither, the request is forbidden.
+func (app *App) GetServingModelsHandler(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
+	ctx := r.Context()
+	namespace, ok := ctx.Value(constants.NamespaceHeaderParameterKey).(string)
+	if !ok || namespace == "" {
+		app.badRequestResponse(w, r, fmt.Errorf("missing namespace in request context"))
+		return
+	}
+
+	identity, ok := ctx.Value(constants.RequestIdentityKey).(*kubernetes.RequestIdentity)
+	if !ok || identity == nil {
+		app.badRequestResponse(w, r, fmt.Errorf("missing RequestIdentity in context"))
+		return
+	}
+
+	client, err := app.kubernetesClientFactory.GetClient(ctx)
+	if err != nil {
+		app.serverErrorResponse(w, r, fmt.Errorf("failed to get Kubernetes client: %w", err))
+		return
+	}
+
+	canListIS, err := client.CanListInferenceServices(ctx, identity, namespace)
+	if err != nil {
+		app.serverErrorResponse(w, r, err)
+		return
+	}
+	canListLLM, err := client.CanListLLMInferenceServices(ctx, identity, namespace)
+	if err != nil {
+		app.serverErrorResponse(w, r, err)
+		return
+	}
+	if !canListIS && !canListLLM {
+		app.forbiddenResponse(w, r, fmt.Sprintf("user is not allowed to list serving models in namespace %s", namespace))
+		return
+	}
+
+	servingModels, err := app.repositories.Guardrails.GetServingModels(client, ctx, namespace)
+	if err != nil {
+		app.serverErrorResponse(w, r, err)
+		return
+	}
+
+	envelope := ServingModelsEnvelope{Data: servingModels}
+	if err := app.WriteJSON(w, http.StatusOK, envelope, nil); err != nil {
+		app.serverErrorResponse(w, r, err)
+	}
+}
 
 // GetGuardrailTemplatesHandler lists the guardrail configuration templates:
 // the platform catalog (read with the BFF's own credentials) plus, when a
@@ -232,6 +284,12 @@ func (app *App) CreateGuardrailDeploymentHandler(w http.ResponseWriter, r *http.
 	if err := repositories.ValidateDeploymentName(request.Name); err != nil {
 		app.badRequestResponse(w, r, err)
 		return
+	}
+	if request.Model != nil {
+		if _, err := repositories.ValidateModelWiring(request.Model); err != nil {
+			app.badRequestResponse(w, r, err)
+			return
+		}
 	}
 
 	client, err := app.kubernetesClientFactory.GetClient(ctx)

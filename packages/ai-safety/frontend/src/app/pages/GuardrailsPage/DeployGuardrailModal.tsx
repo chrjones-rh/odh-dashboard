@@ -15,14 +15,27 @@ import {
   Select,
   SelectOption,
   SelectList,
+  Spinner,
   TextInput,
 } from '@patternfly/react-core';
 import { useNotification } from '~/app/hooks/useNotification';
 import { createGuardrailDeployment } from '~/app/api/guardrails';
+import { useServingModels } from '~/app/hooks/useGuardrails';
 import { getTemplateDisplayName } from '~/app/utilities/guardrailsUtils';
 import { GuardrailTemplate, NamespaceKind } from '~/app/types';
 
 const DEPLOYMENT_NAME_PATTERN = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
+const CUSTOM_MODEL_KEY = '__custom__';
+const NO_MODEL_KEY = '__none__';
+
+const isValidEndpoint = (value: string): boolean => {
+  try {
+    const url = new URL(value);
+    return (url.protocol === 'http:' || url.protocol === 'https:') && url.hostname !== '';
+  } catch {
+    return false;
+  }
+};
 
 type DeployGuardrailModalProps = {
   template: GuardrailTemplate | null;
@@ -46,20 +59,32 @@ const DeployGuardrailModal: React.FC<DeployGuardrailModalProps> = ({
   // when the page namespace arrives late.
   const [namespaceOverride, setNamespaceOverride] = React.useState<string | null>(null);
   const [isNamespaceOpen, setIsNamespaceOpen] = React.useState(false);
+  const [selectedModelKey, setSelectedModelKey] = React.useState<string>(NO_MODEL_KEY);
+  const [isModelOpen, setIsModelOpen] = React.useState(false);
+  const [modelName, setModelName] = React.useState('');
+  const [modelEndpoint, setModelEndpoint] = React.useState('');
   const [isSubmitting, setIsSubmitting] = React.useState(false);
   const [error, setError] = React.useState<Error | null>(null);
 
   const namespace = namespaceOverride ?? defaultNamespace;
+  const [servingModels, modelsLoaded, modelsLoadError] = useServingModels(namespace);
 
   const nameValid = DEPLOYMENT_NAME_PATTERN.test(name);
 
-  const isSubmitDisabled = !template || !nameValid || !namespace || isSubmitting;
+  const modelWiringStarted = modelName.trim() !== '' || modelEndpoint.trim() !== '';
+  const modelValid =
+    !modelWiringStarted || (modelName.trim() !== '' && isValidEndpoint(modelEndpoint.trim()));
+
+  const isSubmitDisabled = !template || !nameValid || !namespace || !modelValid || isSubmitting;
 
   React.useEffect(() => {
     if (template) {
       setName('');
       setError(null);
       setNamespaceOverride(null);
+      setSelectedModelKey(NO_MODEL_KEY);
+      setModelName('');
+      setModelEndpoint('');
     }
   }, [template]);
 
@@ -83,8 +108,79 @@ const DeployGuardrailModal: React.FC<DeployGuardrailModalProps> = ({
     [],
   );
 
+  const onModelSelect = React.useCallback(
+    (_event: React.MouseEvent | undefined, value: string | number | undefined) => {
+      if (typeof value !== 'string') {
+        return;
+      }
+      setSelectedModelKey(value);
+      setIsModelOpen(false);
+      if (value === NO_MODEL_KEY) {
+        setModelName('');
+        setModelEndpoint('');
+      } else if (value === CUSTOM_MODEL_KEY) {
+        setModelName('');
+        setModelEndpoint('');
+      } else {
+        const model = servingModels.find((m) => `${m.kind}/${m.resourceName}` === value);
+        if (model) {
+          setModelName(model.name);
+          setModelEndpoint(model.endpoint ?? '');
+        }
+      }
+    },
+    [servingModels],
+  );
+
+  const modelOptions = React.useMemo(() => {
+    const options: React.ReactNode[] = [
+      <SelectOption key={NO_MODEL_KEY} value={NO_MODEL_KEY}>
+        None (configure later)
+      </SelectOption>,
+    ];
+    if (modelsLoaded) {
+      if (servingModels.length === 0) {
+        options.push(
+          <SelectOption key="no-models" isDisabled>
+            No models found in {namespace || 'this namespace'}
+          </SelectOption>,
+        );
+      }
+      servingModels.forEach((model) => {
+        const key = `${model.kind}/${model.resourceName}`;
+        options.push(
+          <SelectOption
+            key={key}
+            value={key}
+            isDisabled={!model.ready || !model.endpoint}
+            description={`${model.kind}${model.ready ? '' : ' · not ready'}`}
+          >
+            {model.name}
+          </SelectOption>,
+        );
+      });
+    }
+    options.push(
+      <SelectOption key={CUSTOM_MODEL_KEY} value={CUSTOM_MODEL_KEY}>
+        Custom model…
+      </SelectOption>,
+    );
+    return options;
+  }, [servingModels, modelsLoaded, namespace]);
+
+  const selectedModelLabel = React.useMemo(() => {
+    if (selectedModelKey === NO_MODEL_KEY) {
+      return 'None (configure later)';
+    }
+    if (selectedModelKey === CUSTOM_MODEL_KEY) {
+      return 'Custom model…';
+    }
+    const model = servingModels.find((m) => `${m.kind}/${m.resourceName}` === selectedModelKey);
+    return model ? model.name : selectedModelKey;
+  }, [selectedModelKey, servingModels]);
+
   const onSubmit = React.useCallback(async () => {
-    if (!template || !nameValid || !namespace) {
+    if (!template || !nameValid || !namespace || !modelValid) {
       return;
     }
     setIsSubmitting(true);
@@ -95,6 +191,9 @@ const DeployGuardrailModal: React.FC<DeployGuardrailModalProps> = ({
         namespace,
         templateName: template.name,
         templateNamespace: template.namespace,
+        ...(modelWiringStarted
+          ? { model: { name: modelName.trim(), endpoint: modelEndpoint.trim() } }
+          : {}),
       });
       notification.success(
         'Deployment created',
@@ -106,7 +205,18 @@ const DeployGuardrailModal: React.FC<DeployGuardrailModalProps> = ({
     } finally {
       setIsSubmitting(false);
     }
-  }, [template, name, nameValid, namespace, notification, onDeployed]);
+  }, [
+    template,
+    name,
+    nameValid,
+    namespace,
+    modelValid,
+    modelWiringStarted,
+    modelName,
+    modelEndpoint,
+    notification,
+    onDeployed,
+  ]);
 
   if (!template) {
     return null;
@@ -154,6 +264,7 @@ const DeployGuardrailModal: React.FC<DeployGuardrailModalProps> = ({
               onOpenChange={(open) => setIsNamespaceOpen(open)}
               onSelect={onNamespaceSelect}
               maxMenuHeight="300px"
+              popperProps={{ appendTo: 'inline' }}
               toggle={(toggleRef) => (
                 <MenuToggle
                   ref={toggleRef}
@@ -170,6 +281,97 @@ const DeployGuardrailModal: React.FC<DeployGuardrailModalProps> = ({
               <SelectList>{namespaceOptions}</SelectList>
             </Select>
           </FormGroup>
+          <FormGroup label="Model" fieldId="guardrail-deployment-model">
+            <Select
+              isOpen={isModelOpen}
+              onOpenChange={(open) => setIsModelOpen(open)}
+              onSelect={onModelSelect}
+              maxMenuHeight="300px"
+              popperProps={{ appendTo: 'inline' }}
+              toggle={(toggleRef) => (
+                <MenuToggle
+                  ref={toggleRef}
+                  onClick={() => setIsModelOpen(!isModelOpen)}
+                  isExpanded={isModelOpen}
+                  isFullWidth
+                  data-testid="guardrail-deployment-model-select"
+                >
+                  {modelsLoaded ? (
+                    selectedModelLabel
+                  ) : (
+                    <Spinner size="sm" aria-label="Loading models" />
+                  )}
+                </MenuToggle>
+              )}
+              selected={selectedModelKey}
+            >
+              <SelectList>{modelOptions}</SelectList>
+            </Select>
+            <FormHelperText>
+              <HelperText>
+                <HelperTextItem>
+                  The model the guardrail passes allowed messages to. Wiring a model lets you test
+                  the deployment from the deployments list.
+                </HelperTextItem>
+              </HelperText>
+            </FormHelperText>
+            {modelsLoadError && (
+              <FormHelperText>
+                <HelperText>
+                  <HelperTextItem variant="warning">
+                    Models in {namespace || 'the namespace'} could not be listed. You can still
+                    enter a custom model.
+                  </HelperTextItem>
+                </HelperText>
+              </FormHelperText>
+            )}
+          </FormGroup>
+          {selectedModelKey !== NO_MODEL_KEY && (
+            <>
+              <FormGroup
+                label="Model name"
+                isRequired={modelWiringStarted}
+                fieldId="guardrail-deployment-model-name"
+              >
+                <TextInput
+                  id="guardrail-deployment-model-name"
+                  name="guardrail-deployment-model-name"
+                  value={modelName}
+                  onChange={(_event, value) => setModelName(value)}
+                  placeholder="For example, Qwen/Qwen3-VL-30B-A3B-Instruct"
+                  data-testid="guardrail-deployment-model-name-input"
+                />
+              </FormGroup>
+              <FormGroup
+                label="Model endpoint"
+                isRequired={modelWiringStarted}
+                fieldId="guardrail-deployment-model-endpoint"
+              >
+                <TextInput
+                  id="guardrail-deployment-model-endpoint"
+                  name="guardrail-deployment-model-endpoint"
+                  value={modelEndpoint}
+                  validated={
+                    modelEndpoint === '' || isValidEndpoint(modelEndpoint.trim())
+                      ? 'default'
+                      : 'error'
+                  }
+                  onChange={(_event, value) => setModelEndpoint(value)}
+                  placeholder="For example, https://my-model-predictor.my-project.svc.cluster.local:8080/v1"
+                  data-testid="guardrail-deployment-model-endpoint-input"
+                />
+                {modelEndpoint !== '' && !isValidEndpoint(modelEndpoint.trim()) && (
+                  <FormHelperText>
+                    <HelperText>
+                      <HelperTextItem variant="error">
+                        Endpoint must be an http or https URL, including the /v1 suffix.
+                      </HelperTextItem>
+                    </HelperText>
+                  </FormHelperText>
+                )}
+              </FormGroup>
+            </>
+          )}
         </Form>
         {error && (
           <Alert

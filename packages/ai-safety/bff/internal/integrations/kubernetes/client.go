@@ -31,9 +31,19 @@ type KubernetesClientInterface interface {
 	DeleteNemoGuardrails(ctx context.Context, namespace string, name string) error
 	// DeleteConfigMap deletes a ConfigMap in the namespace.
 	DeleteConfigMap(ctx context.Context, namespace string, name string) error
+	// ListInferenceServices lists KServe InferenceServices in the namespace.
+	ListInferenceServices(ctx context.Context, namespace string) ([]unstructured.Unstructured, error)
+	// ListLLMInferenceServices lists KServe LLMInferenceServices in the namespace.
+	ListLLMInferenceServices(ctx context.Context, namespace string) ([]unstructured.Unstructured, error)
 	// CanListNemoGuardrails reports whether the request identity may list
 	// NemoGuardrails custom resources in the namespace.
 	CanListNemoGuardrails(ctx context.Context, identity *RequestIdentity, namespace string) (bool, error)
+	// CanListInferenceServices reports whether the request identity may list
+	// KServe InferenceServices in the namespace.
+	CanListInferenceServices(ctx context.Context, identity *RequestIdentity, namespace string) (bool, error)
+	// CanListLLMInferenceServices reports whether the request identity may list
+	// KServe LLMInferenceServices in the namespace.
+	CanListLLMInferenceServices(ctx context.Context, identity *RequestIdentity, namespace string) (bool, error)
 	// CanListConfigMaps reports whether the request identity may list
 	// ConfigMaps in the namespace.
 	CanListConfigMaps(ctx context.Context, identity *RequestIdentity, namespace string) (bool, error)
