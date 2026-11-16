@@ -65,6 +65,19 @@ func (f *fakeGuardrailsClient) BearerToken() (string, error) {
 	return "test-token", nil
 }
 
+func (f *fakeGuardrailsClient) UpdateConfigMap(_ context.Context, namespace string, configMap *corev1.ConfigMap) (*corev1.ConfigMap, error) {
+	for i := range f.configMaps {
+		if f.configMaps[i].Namespace == namespace && f.configMaps[i].Name == configMap.Name {
+			updated := *configMap
+			updated.Namespace = namespace
+			updated.ResourceVersion = "2"
+			f.configMaps[i] = updated
+			return &updated, nil
+		}
+	}
+	return nil, apierrors.NewNotFound(schema.GroupResource{Group: "", Resource: "configmaps"}, configMap.Name)
+}
+
 func (f *fakeGuardrailsClient) ListConfigMapsByLabel(_ context.Context, namespace string, labelSelector string) ([]corev1.ConfigMap, error) {
 	// The fake honors only the nemo-guardrails-config selector.
 	if labelSelector != "nemo-guardrails-config=true" {

@@ -112,6 +112,15 @@ type GuardrailDeploymentCreateRequest struct {
 	Model             *GuardrailModelWiring `json:"model,omitempty"`
 }
 
+// GuardrailTemplateUpsertRequest is the request body for creating or updating
+// a user-created guardrail template (a single config.yaml) in a namespace.
+type GuardrailTemplateUpsertRequest struct {
+	Name        string `json:"name"`
+	Namespace   string `json:"namespace"`
+	Description string `json:"description,omitempty"`
+	ConfigYAML  string `json:"configYAML"`
+}
+
 // ServingModel is a model served in a namespace that a guardrail deployment
 // can be wired to.
 type ServingModel struct {

@@ -1,6 +1,7 @@
 /* eslint-disable no-console */
 const path = require('path');
 const { rspack } = require('@rspack/core');
+const MonacoWebpackPlugin = require('monaco-editor-webpack-plugin');
 const { moduleFederationPlugins } = require('./moduleFederation');
 const { setupWebpackDotenvFilesForEnv } = require('./dotenv');
 const { name } = require('../package.json');
@@ -77,6 +78,7 @@ module.exports = (env) => ({
         // only process modules with this loader
         // if they live under a 'fonts' or 'pficon' directory
         include: [
+          path.dirname(require.resolve('monaco-editor/package.json')),
           path.resolve(RELATIVE_DIRNAME, 'node_modules/patternfly/dist/fonts'),
           path.resolve(
             RELATIVE_DIRNAME,
@@ -194,6 +196,20 @@ module.exports = (env) => ({
         ],
       },
       {
+        // The monaco ESM build ships CSS imports alongside its modules. The
+        // include covers both the symlinked path (resolve.symlinks is false)
+        // and the pnpm store realpath.
+        test: /\.css$/,
+        include: [
+          path.resolve(RELATIVE_DIRNAME, 'node_modules/monaco-editor'),
+          path.dirname(require.resolve('monaco-editor/package.json')),
+        ],
+        use: [
+          env === 'production' ? rspack.CssExtractRspackPlugin.loader : 'style-loader',
+          'css-loader',
+        ],
+      },
+      {
         test: /\.ya?ml$/,
         use: 'js-yaml-loader',
       },
@@ -206,6 +222,8 @@ module.exports = (env) => ({
     uniqueName: name,
   },
   plugins: [
+    // Sets up the monaco web workers for the PF CodeEditor (YAML templates).
+    new MonacoWebpackPlugin({ languages: ['yaml'] }),
     ...moduleFederationPlugins,
     ...setupWebpackDotenvFilesForEnv({
       directory: RELATIVE_DIRNAME,

@@ -145,9 +145,23 @@ func (kc *TokenKubernetesClient) CanListConfigMaps(ctx context.Context, _ *Reque
 // CanCreateConfigMaps performs a SelfSubjectAccessReview for the token user
 // against ConfigMap creation in the namespace.
 // RequestIdentity is unused because the token already represents the user identity.
+func (kc *TokenKubernetesClient) CanCreateConfigMaps(ctx context.Context, _ *RequestIdentity, namespace string) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	return kc.selfSubjectAccessReview(ctx, "create", "", "configmaps", namespace)
+}
+
 // CanUpdateConfigMaps performs a SelfSubjectAccessReview for the token user
 // against ConfigMap updates in the namespace.
 // RequestIdentity is unused because the token already represents the user identity.
+func (kc *TokenKubernetesClient) CanUpdateConfigMaps(ctx context.Context, _ *RequestIdentity, namespace string) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	return kc.selfSubjectAccessReview(ctx, "update", "", "configmaps", namespace)
+}
+
 // CanListInferenceServices performs a SelfSubjectAccessReview for the token
 // user against KServe InferenceServices in the namespace.
 // RequestIdentity is unused because the token already represents the user identity.

@@ -482,4 +482,164 @@ describe('Guardrails', () => {
     guardrailsPage.findTestVerdict().should('have.text', 'Blocked');
     guardrailsPage.findTestResult().should('contain', "I'm sorry, I can't respond to that.");
   });
+
+  it('should upload a template and see it in the catalog', () => {
+    initIntercepts({});
+    guardrailsPage.visit();
+
+    guardrailsPage.findUploadTemplateButton().click();
+    guardrailsPage.findManageTemplateModal().should('exist');
+    guardrailsPage.findTemplateNameInput().type('my-uploaded-guardrail');
+    guardrailsPage.findTemplateDescriptionInput().type('My uploaded guardrail');
+
+    const configYAML = 'passthrough: true\nrails:\n  input:\n    flows:\n      - mask pii\n';
+    guardrailsPage.waitForTemplateConfigEditor();
+    guardrailsPage.setTemplateConfigYAML(configYAML);
+
+    const uploadedTemplate = mockGuardrailTemplate({
+      name: 'my-uploaded-guardrail',
+      namespace: TEST_NAMESPACE,
+      keys: ['config.yaml'],
+      description: 'My uploaded guardrail',
+      source: 'user',
+    });
+
+    cy.interceptApi(
+      'POST /api/:apiVersion/guardrails/templates',
+      {
+        path: {
+          apiVersion: CLIENT_API_VERSION,
+        },
+      },
+      uploadedTemplate,
+    ).as('createTemplate');
+
+    // The refreshed catalog includes the uploaded template.
+    cy.interceptApi(
+      'GET /api/:apiVersion/guardrails/templates',
+      {
+        path: {
+          apiVersion: CLIENT_API_VERSION,
+        },
+        query: {
+          namespace: TEST_NAMESPACE,
+        },
+      },
+      [
+        mockGuardrailTemplate({}),
+        mockGuardrailTemplate({
+          name: 'trustyai-service-operator-nemo-guardrails-default-injection',
+        }),
+        mockGuardrailTemplate({
+          name: 'my-custom-guardrail',
+          namespace: TEST_NAMESPACE,
+          source: 'user',
+        }),
+        uploadedTemplate,
+      ],
+    );
+
+    // The drawer selects the saved template.
+    cy.interceptApi(
+      'GET /api/:apiVersion/guardrails/templates/:name',
+      {
+        path: {
+          apiVersion: CLIENT_API_VERSION,
+          name: 'my-uploaded-guardrail',
+        },
+        query: {
+          namespace: TEST_NAMESPACE,
+        },
+      },
+      mockGuardrailTemplateDetail({
+        name: 'my-uploaded-guardrail',
+        namespace: TEST_NAMESPACE,
+        description: 'My uploaded guardrail',
+        keys: ['config.yaml'],
+        files: [{ key: 'config.yaml', content: configYAML }],
+      }),
+    );
+
+    guardrailsPage.findTemplateSubmitButton().should('be.enabled');
+    guardrailsPage.findTemplateSubmitButton().click();
+
+    cy.wait('@createTemplate').then((interception) => {
+      expect(interception.request.body).to.eql({
+        name: 'my-uploaded-guardrail',
+        namespace: TEST_NAMESPACE,
+        description: 'My uploaded guardrail',
+        configYAML,
+      });
+    });
+
+    guardrailsPage.findTemplateRow('my-uploaded-guardrail').should('exist');
+  });
+
+  it('should edit a user-created template', () => {
+    initIntercepts({});
+
+    const originalYAML = 'passthrough: true\n';
+    const userTemplateDetail = mockGuardrailTemplateDetail({
+      name: 'my-custom-guardrail',
+      namespace: TEST_NAMESPACE,
+      description: 'My custom guardrail',
+      keys: ['config.yaml'],
+      files: [{ key: 'config.yaml', content: originalYAML }],
+    });
+    cy.interceptApi(
+      'GET /api/:apiVersion/guardrails/templates/:name',
+      {
+        path: {
+          apiVersion: CLIENT_API_VERSION,
+          name: 'my-custom-guardrail',
+        },
+        query: {
+          namespace: TEST_NAMESPACE,
+        },
+      },
+      userTemplateDetail,
+    );
+
+    guardrailsPage.visit();
+    guardrailsPage.findTemplateRow('my-custom-guardrail').click();
+    guardrailsPage.findTemplateDrawer().should('exist');
+    guardrailsPage.findTemplateEditButton('my-custom-guardrail').click();
+    guardrailsPage.findManageTemplateModal().should('exist');
+
+    // The name is fixed and the editor is prefilled with the current content.
+    guardrailsPage.findTemplateNameInput().should('have.value', 'my-custom-guardrail');
+    guardrailsPage.findTemplateNameInput().should('be.disabled');
+    guardrailsPage.waitForTemplateConfigEditor();
+    guardrailsPage.getTemplateConfigYAML().should('equal', originalYAML);
+
+    const updatedYAML = 'passthrough: false\n';
+    guardrailsPage.setTemplateConfigYAML(updatedYAML);
+
+    cy.interceptApi(
+      'PUT /api/:apiVersion/guardrails/templates/:name',
+      {
+        path: {
+          apiVersion: CLIENT_API_VERSION,
+          name: 'my-custom-guardrail',
+        },
+      },
+      mockGuardrailTemplate({
+        name: 'my-custom-guardrail',
+        namespace: TEST_NAMESPACE,
+        source: 'user',
+      }),
+    ).as('updateTemplate');
+
+    guardrailsPage.findTemplateSubmitButton().should('be.enabled');
+    guardrailsPage.findTemplateSubmitButton().click();
+
+    cy.wait('@updateTemplate').then((interception) => {
+      expect(interception.request.body).to.eql({
+        name: 'my-custom-guardrail',
+        namespace: TEST_NAMESPACE,
+        description: 'My custom guardrail',
+        configYAML: updatedYAML,
+      });
+    });
+  });
 });

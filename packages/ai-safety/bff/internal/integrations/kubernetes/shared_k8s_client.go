@@ -132,6 +132,18 @@ func (kc *SharedClientLogic) CreateConfigMap(ctx context.Context, namespace stri
 	return created, nil
 }
 
+// UpdateConfigMap updates a ConfigMap in the namespace.
+func (kc *SharedClientLogic) UpdateConfigMap(ctx context.Context, namespace string, configMap *corev1.ConfigMap) (*corev1.ConfigMap, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	updated, err := kc.Client.CoreV1().ConfigMaps(namespace).Update(ctx, configMap, metav1.UpdateOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to update configmap %s in namespace %s: %w", configMap.Name, namespace, err)
+	}
+	return updated, nil
+}
+
 func (kc *SharedClientLogic) DeleteNemoGuardrails(ctx context.Context, namespace string, name string) error {
 	if kc.DynamicClient == nil {
 		return fmt.Errorf("dynamic kubernetes client is not available")

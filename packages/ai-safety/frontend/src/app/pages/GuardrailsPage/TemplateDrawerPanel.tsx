@@ -2,6 +2,7 @@ import React from 'react';
 import {
   Alert,
   Bullseye,
+  Button,
   CodeBlock,
   CodeBlockCode,
   DescriptionList,
@@ -18,6 +19,7 @@ import {
   Spinner,
   Title,
 } from '@patternfly/react-core';
+import { PencilAltIcon } from '@patternfly/react-icons';
 import { useGuardrailTemplate } from '~/app/hooks/useGuardrails';
 import { getTemplateDisplayName } from '~/app/utilities/guardrailsUtils';
 import { GuardrailTemplate } from '~/app/types';
@@ -25,9 +27,10 @@ import { GuardrailTemplate } from '~/app/types';
 type TemplateDrawerPanelProps = {
   template: GuardrailTemplate | null;
   onClose: () => void;
+  onEdit: (template: GuardrailTemplate) => void;
 };
 
-const TemplateDrawerPanel: React.FC<TemplateDrawerPanelProps> = ({ template, onClose }) => {
+const TemplateDrawerPanel: React.FC<TemplateDrawerPanelProps> = ({ template, onClose, onEdit }) => {
   const [detail, detailLoaded, detailError] = useGuardrailTemplate(
     template?.name ?? null,
     template?.namespace ?? '',
@@ -41,6 +44,15 @@ const TemplateDrawerPanel: React.FC<TemplateDrawerPanelProps> = ({ template, onC
     >
       <DrawerHead>
         <DrawerActions>
+          {template?.source === 'user' && (
+            <Button
+              variant="plain"
+              aria-label={`Edit ${template.name}`}
+              icon={<PencilAltIcon />}
+              onClick={() => onEdit(template)}
+              data-testid={`guardrails-template-edit-${getTemplateDisplayName(template.name)}`}
+            />
+          )}
           <DrawerCloseButton onClick={onClose} data-testid="guardrails-template-drawer-close" />
         </DrawerActions>
         {template && (

@@ -5,6 +5,7 @@ import {
   restCREATE,
   restDELETE,
   restGET,
+  restUPDATE,
 } from 'mod-arch-core';
 import { BFF_API_VERSION, URL_PREFIX } from '~/app/utilities/const';
 import {
@@ -13,6 +14,7 @@ import {
   GuardrailDeploymentDetail,
   GuardrailTemplate,
   GuardrailTemplateDetail,
+  GuardrailTemplateUpsertRequest,
   GuardrailTestRequest,
   GuardrailTestResult,
   ServingModel,
@@ -151,3 +153,46 @@ export const deleteGuardrailDeployment = (
       { parseJSON: false },
     ),
   ).then(() => undefined);
+
+export const createGuardrailTemplate = (
+  hostPath: string,
+  request: GuardrailTemplateUpsertRequest,
+): Promise<GuardrailTemplate> =>
+  handleRestFailures(
+    restCREATE(hostPath, `${URL_PREFIX}/api/${BFF_API_VERSION}/guardrails/templates`, {
+      name: request.name,
+      namespace: request.namespace,
+      ...(request.description ? { description: request.description } : {}),
+      configYAML: request.configYAML,
+    }),
+  ).then((response) => {
+    if (isModArchResponse<GuardrailTemplate>(response)) {
+      return response.data;
+    }
+    throw new Error('Invalid response format');
+  });
+
+export const updateGuardrailTemplate = (
+  hostPath: string,
+  namespace: string,
+  name: string,
+  request: Omit<GuardrailTemplateUpsertRequest, 'name' | 'namespace'>,
+): Promise<GuardrailTemplate> =>
+  handleRestFailures(
+    restUPDATE(
+      hostPath,
+      `${URL_PREFIX}/api/${BFF_API_VERSION}/guardrails/templates/${name}`,
+      {
+        name,
+        namespace,
+        ...(request.description ? { description: request.description } : {}),
+        configYAML: request.configYAML,
+      },
+      { namespace },
+    ),
+  ).then((response) => {
+    if (isModArchResponse<GuardrailTemplate>(response)) {
+      return response.data;
+    }
+    throw new Error('Invalid response format');
+  });

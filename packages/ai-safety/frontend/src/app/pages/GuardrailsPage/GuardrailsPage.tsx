@@ -9,7 +9,7 @@ import {
 } from '@patternfly/react-core';
 import { useNamespaceSelector } from 'mod-arch-core';
 import ApplicationsPage from '~/app/components/ApplicationsPage';
-import { useGuardrailDeployments } from '~/app/hooks/useGuardrails';
+import { useGuardrailDeployments, useGuardrailTemplates } from '~/app/hooks/useGuardrails';
 import { GuardrailDeployment, GuardrailTemplate } from '~/app/types';
 import TemplatesTab from './TemplatesTab';
 import DeploymentsTab from './DeploymentsTab';
@@ -18,6 +18,7 @@ import DeploymentDrawerPanel from './DeploymentDrawerPanel';
 import DeployGuardrailModal from './DeployGuardrailModal';
 import DeleteGuardrailModal from './DeleteGuardrailModal';
 import TestGuardrailModal from './TestGuardrailModal';
+import ManageTemplateModal, { ManageTemplateTarget } from './ManageTemplateModal';
 import NamespaceSelector from './NamespaceSelector';
 
 const TEMPLATES_TAB = 0;
@@ -30,6 +31,7 @@ const GuardrailsPage: React.FC = () => {
   const [deployTemplate, setDeployTemplate] = React.useState<GuardrailTemplate | null>(null);
   const [deleteDeployment, setDeleteDeployment] = React.useState<GuardrailDeployment | null>(null);
   const [testDeployment, setTestDeployment] = React.useState<GuardrailDeployment | null>(null);
+  const [manageTemplate, setManageTemplate] = React.useState<ManageTemplateTarget | null>(null);
 
   // The selected namespace is persisted (last used) and restored on load,
   // falling back to the first accessible namespace — the same pattern the
@@ -45,6 +47,8 @@ const GuardrailsPage: React.FC = () => {
 
   const [deployments, deploymentsLoaded, deploymentsError, refreshDeployments] =
     useGuardrailDeployments(namespace);
+  const [templates, templatesLoaded, templatesError, refreshTemplates] =
+    useGuardrailTemplates(namespace);
 
   const onTabSelect = React.useCallback((_event: React.MouseEvent, tabKey: string | number) => {
     setActiveTabKey(tabKey);
@@ -83,11 +87,25 @@ const GuardrailsPage: React.FC = () => {
     [namespaces, updatePreferredNamespace, refreshDeployments],
   );
 
+  const onTemplateSaved = React.useCallback(
+    (template: GuardrailTemplate) => {
+      setManageTemplate(null);
+      refreshTemplates();
+      // Show the saved template in the drawer with fresh contents.
+      setSelectedTemplate(template);
+    },
+    [refreshTemplates],
+  );
+
   const isTemplatesTab = activeTabKey === TEMPLATES_TAB;
   const isDrawerExpanded = isTemplatesTab ? !!selectedTemplate : !!selectedDeployment;
 
   const panelContent = isTemplatesTab ? (
-    <TemplateDrawerPanel template={selectedTemplate} onClose={() => setSelectedTemplate(null)} />
+    <TemplateDrawerPanel
+      template={selectedTemplate}
+      onClose={() => setSelectedTemplate(null)}
+      onEdit={(template) => setManageTemplate({ mode: 'edit', template })}
+    />
   ) : (
     <DeploymentDrawerPanel
       namespace={namespace}
@@ -126,7 +144,10 @@ const GuardrailsPage: React.FC = () => {
                   data-testid="guardrails-templates-tab"
                 >
                   <TemplatesTab
-                    namespace={namespace}
+                    templates={templates}
+                    templatesLoaded={templatesLoaded}
+                    templatesError={templatesError}
+                    onUpload={() => setManageTemplate({ mode: 'create' })}
                     onSelect={setSelectedTemplate}
                     onDeploy={setDeployTemplate}
                   />
@@ -163,6 +184,12 @@ const GuardrailsPage: React.FC = () => {
         onDeleted={onDeleted}
       />
       <TestGuardrailModal deployment={testDeployment} onClose={() => setTestDeployment(null)} />
+      <ManageTemplateModal
+        target={manageTemplate}
+        defaultNamespace={namespace}
+        onClose={() => setManageTemplate(null)}
+        onSaved={onTemplateSaved}
+      />
     </>
   );
 };

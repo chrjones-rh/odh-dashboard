@@ -27,6 +27,8 @@ type KubernetesClientInterface interface {
 	CreateNemoGuardrails(ctx context.Context, namespace string, cr *unstructured.Unstructured) (*unstructured.Unstructured, error)
 	// CreateConfigMap creates a ConfigMap in the namespace.
 	CreateConfigMap(ctx context.Context, namespace string, configMap *corev1.ConfigMap) (*corev1.ConfigMap, error)
+	// UpdateConfigMap updates a ConfigMap in the namespace.
+	UpdateConfigMap(ctx context.Context, namespace string, configMap *corev1.ConfigMap) (*corev1.ConfigMap, error)
 	// DeleteNemoGuardrails deletes a NemoGuardrails custom resource in the namespace.
 	DeleteNemoGuardrails(ctx context.Context, namespace string, name string) error
 	// DeleteConfigMap deletes a ConfigMap in the namespace.
@@ -49,6 +51,12 @@ type KubernetesClientInterface interface {
 	// CanListConfigMaps reports whether the request identity may list
 	// ConfigMaps in the namespace.
 	CanListConfigMaps(ctx context.Context, identity *RequestIdentity, namespace string) (bool, error)
+	// CanCreateConfigMaps reports whether the request identity may create
+	// ConfigMaps in the namespace.
+	CanCreateConfigMaps(ctx context.Context, identity *RequestIdentity, namespace string) (bool, error)
+	// CanUpdateConfigMaps reports whether the request identity may update
+	// ConfigMaps in the namespace.
+	CanUpdateConfigMaps(ctx context.Context, identity *RequestIdentity, namespace string) (bool, error)
 	// CanCreateGuardrailDeployment reports whether the request identity may
 	// create both ConfigMaps and NemoGuardrails custom resources in the namespace.
 	CanCreateGuardrailDeployment(ctx context.Context, identity *RequestIdentity, namespace string) (bool, error)

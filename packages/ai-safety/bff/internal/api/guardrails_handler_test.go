@@ -103,6 +103,26 @@ func (f *guardrailsFakeClient) BearerToken() (string, error) {
 	return "test-token", nil
 }
 
+func (f *guardrailsFakeClient) UpdateConfigMap(_ context.Context, namespace string, configMap *corev1.ConfigMap) (*corev1.ConfigMap, error) {
+	for i := range f.configMaps {
+		if f.configMaps[i].Namespace == namespace && f.configMaps[i].Name == configMap.Name {
+			updated := *configMap
+			updated.Namespace = namespace
+			f.configMaps[i] = updated
+			return &updated, nil
+		}
+	}
+	return nil, apierrors.NewNotFound(schema.GroupResource{Group: "", Resource: "configmaps"}, configMap.Name)
+}
+
+func (f *guardrailsFakeClient) CanCreateConfigMaps(_ context.Context, _ *kubernetes.RequestIdentity, _ string) (bool, error) {
+	return f.allowCreate, nil
+}
+
+func (f *guardrailsFakeClient) CanUpdateConfigMaps(_ context.Context, _ *kubernetes.RequestIdentity, _ string) (bool, error) {
+	return f.allowCreate, nil
+}
+
 func (f *guardrailsFakeClient) CanListConfigMaps(_ context.Context, _ *kubernetes.RequestIdentity, _ string) (bool, error) {
 	return f.allowList, nil
 }
@@ -833,4 +853,143 @@ func TestTestGuardrailDeploymentHandlerForbidden(t *testing.T) {
 		"message": "hello",
 	})
 	assert.Equal(t, http.StatusForbidden, recorder.Code)
+}
+
+func TestCreateGuardrailTemplateHandler(t *testing.T) {
+	client := &guardrailsFakeClient{allowCreate: true}
+
+	requestBody := map[string]interface{}{
+		"name":        "my-new-template",
+		"namespace":   "test-ns",
+		"description": "My custom guardrail",
+		"configYAML":  "passthrough: true\n",
+	}
+	recorder, body := performGuardrailsRequest(t, client, http.MethodPost, "/api/v1/guardrails/templates", requestBody)
+	require.Equal(t, http.StatusCreated, recorder.Code)
+
+	data, ok := body["data"].(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, "my-new-template", data["name"])
+	assert.Equal(t, "user", data["source"])
+	assert.Equal(t, "My custom guardrail", data["description"])
+
+	// The ConfigMap was created with the catalog and ownership labels.
+	var created *corev1.ConfigMap
+	for i := range client.configMaps {
+		if client.configMaps[i].Namespace == "test-ns" && client.configMaps[i].Name == "my-new-template" {
+			created = &client.configMaps[i]
+		}
+	}
+	require.NotNil(t, created)
+	assert.Equal(t, "true", created.Labels["nemo-guardrails-config"])
+	assert.Equal(t, "true", created.Labels["opendatahub.io/dashboard"])
+}
+
+func TestCreateGuardrailTemplateHandlerForbidden(t *testing.T) {
+	client := &guardrailsFakeClient{allowCreate: false}
+
+	recorder, _ := performGuardrailsRequest(t, client, http.MethodPost, "/api/v1/guardrails/templates", map[string]interface{}{
+		"name":       "my-new-template",
+		"namespace":  "test-ns",
+		"configYAML": "passthrough: true\n",
+	})
+	assert.Equal(t, http.StatusForbidden, recorder.Code)
+}
+
+func TestCreateGuardrailTemplateHandlerInvalidYAML(t *testing.T) {
+	client := &guardrailsFakeClient{allowCreate: true}
+
+	recorder, _ := performGuardrailsRequest(t, client, http.MethodPost, "/api/v1/guardrails/templates", map[string]interface{}{
+		"name":       "my-new-template",
+		"namespace":  "test-ns",
+		"configYAML": "\tinvalid: [yaml",
+	})
+	assert.Equal(t, http.StatusBadRequest, recorder.Code)
+}
+
+func TestCreateGuardrailTemplateHandlerPlatformNamespace(t *testing.T) {
+	client := &guardrailsFakeClient{allowCreate: true}
+
+	recorder, _ := performGuardrailsRequest(t, client, http.MethodPost, "/api/v1/guardrails/templates", map[string]interface{}{
+		"name":       "my-new-template",
+		"namespace":  "redhat-ods-applications",
+		"configYAML": "passthrough: true\n",
+	})
+	assert.Equal(t, http.StatusBadRequest, recorder.Code)
+}
+
+func TestUpdateGuardrailTemplateHandler(t *testing.T) {
+	client := &guardrailsFakeClient{
+		configMaps: []corev1.ConfigMap{
+			{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: "test-ns",
+					Name:      "my-template",
+					Labels: map[string]string{
+						"nemo-guardrails-config":   "true",
+						"opendatahub.io/dashboard": "true",
+					},
+				},
+				Data: map[string]string{
+					"config.yaml": "passthrough: true\n",
+					"rails.co":    "define flow",
+				},
+			},
+		},
+		allowCreate: true,
+	}
+
+	requestBody := map[string]interface{}{
+		"description": "Updated",
+		"configYAML":  "passthrough: false\n",
+	}
+	recorder, body := performGuardrailsRequest(t, client, http.MethodPut, "/api/v1/guardrails/templates/my-template?namespace=test-ns", requestBody)
+	require.Equal(t, http.StatusOK, recorder.Code)
+
+	data, ok := body["data"].(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, "Updated", data["description"])
+
+	updated := client.configMaps[0]
+	assert.Equal(t, "passthrough: false\n", updated.Data["config.yaml"])
+	assert.Equal(t, "define flow", updated.Data["rails.co"])
+}
+
+func TestUpdateGuardrailTemplateHandlerNotDashboardManaged(t *testing.T) {
+	client := &guardrailsFakeClient{
+		configMaps: []corev1.ConfigMap{
+			{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: "test-ns",
+					Name:      "hand-made",
+					Labels:    map[string]string{"nemo-guardrails-config": "true"},
+				},
+				Data: map[string]string{"config.yaml": "passthrough: true\n"},
+			},
+		},
+		allowCreate: true,
+	}
+
+	recorder, _ := performGuardrailsRequest(t, client, http.MethodPut, "/api/v1/guardrails/templates/hand-made?namespace=test-ns", map[string]interface{}{
+		"configYAML": "passthrough: false\n",
+	})
+	assert.Equal(t, http.StatusForbidden, recorder.Code)
+}
+
+func TestUpdateGuardrailTemplateHandlerPlatformNamespace(t *testing.T) {
+	client := &guardrailsFakeClient{allowCreate: true}
+
+	recorder, _ := performGuardrailsRequest(t, client, http.MethodPut, "/api/v1/guardrails/templates/some-template?namespace=redhat-ods-applications", map[string]interface{}{
+		"configYAML": "passthrough: false\n",
+	})
+	assert.Equal(t, http.StatusBadRequest, recorder.Code)
+}
+
+func TestUpdateGuardrailTemplateHandlerNotFound(t *testing.T) {
+	client := &guardrailsFakeClient{allowCreate: true}
+
+	recorder, _ := performGuardrailsRequest(t, client, http.MethodPut, "/api/v1/guardrails/templates/missing?namespace=test-ns", map[string]interface{}{
+		"configYAML": "passthrough: false\n",
+	})
+	assert.Equal(t, http.StatusNotFound, recorder.Code)
 }

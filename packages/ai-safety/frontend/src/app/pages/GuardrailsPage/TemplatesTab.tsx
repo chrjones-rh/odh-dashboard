@@ -14,20 +14,28 @@ import {
   ToolbarContent,
   ToolbarItem,
 } from '@patternfly/react-core';
-import { SearchIcon } from '@patternfly/react-icons';
+import { SearchIcon, UploadIcon } from '@patternfly/react-icons';
 import { Table, Tbody, Td, Th, Thead, Tr } from '@patternfly/react-table';
-import { useGuardrailTemplates } from '~/app/hooks/useGuardrails';
 import { getTemplateDisplayName, formatDate } from '~/app/utilities/guardrailsUtils';
 import { GuardrailTemplate } from '~/app/types';
 
 type TemplatesTabProps = {
-  namespace: string;
+  templates: GuardrailTemplate[];
+  templatesLoaded: boolean;
+  templatesError?: Error;
+  onUpload: () => void;
   onSelect: (template: GuardrailTemplate | null) => void;
   onDeploy: (template: GuardrailTemplate | null) => void;
 };
 
-const TemplatesTab: React.FC<TemplatesTabProps> = ({ namespace, onSelect, onDeploy }) => {
-  const [templates, loaded, error] = useGuardrailTemplates(namespace);
+const TemplatesTab: React.FC<TemplatesTabProps> = ({
+  templates,
+  templatesLoaded,
+  templatesError,
+  onUpload,
+  onSelect,
+  onDeploy,
+}) => {
   const [query, setQuery] = React.useState('');
 
   const filteredTemplates = React.useMemo(() => {
@@ -44,15 +52,15 @@ const TemplatesTab: React.FC<TemplatesTabProps> = ({ namespace, onSelect, onDepl
     );
   }, [templates, query]);
 
-  if (error) {
+  if (templatesError) {
     return (
       <Alert variant="danger" title="Failed to load guardrail templates" isInline>
-        {error.message}
+        {templatesError.message}
       </Alert>
     );
   }
 
-  if (!loaded) {
+  if (!templatesLoaded) {
     return (
       <Bullseye data-testid="guardrails-templates-loading">
         <Spinner />
@@ -73,6 +81,16 @@ const TemplatesTab: React.FC<TemplatesTabProps> = ({ namespace, onSelect, onDepl
               onClear={() => setQuery('')}
               data-testid="guardrails-templates-search"
             />
+          </ToolbarItem>
+          <ToolbarItem>
+            <Button
+              variant="secondary"
+              icon={<UploadIcon />}
+              onClick={onUpload}
+              data-testid="guardrails-templates-upload-button"
+            >
+              Upload template
+            </Button>
           </ToolbarItem>
         </ToolbarContent>
       </Toolbar>

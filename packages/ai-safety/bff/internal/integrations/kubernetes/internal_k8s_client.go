@@ -96,8 +96,22 @@ func (kc *InternalKubernetesClient) CanListConfigMaps(ctx context.Context, ident
 
 // CanCreateConfigMaps performs a SubjectAccessReview for the request identity
 // against ConfigMap creation in the namespace.
+func (kc *InternalKubernetesClient) CanCreateConfigMaps(ctx context.Context, identity *RequestIdentity, namespace string) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	return kc.subjectAccessReview(ctx, identity, "create", "", "configmaps", namespace)
+}
+
 // CanUpdateConfigMaps performs a SubjectAccessReview for the request identity
 // against ConfigMap updates in the namespace.
+func (kc *InternalKubernetesClient) CanUpdateConfigMaps(ctx context.Context, identity *RequestIdentity, namespace string) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	return kc.subjectAccessReview(ctx, identity, "update", "", "configmaps", namespace)
+}
+
 // CanListInferenceServices performs a SubjectAccessReview for the request
 // identity against KServe InferenceServices in the namespace.
 func (kc *InternalKubernetesClient) CanListInferenceServices(ctx context.Context, identity *RequestIdentity, namespace string) (bool, error) {

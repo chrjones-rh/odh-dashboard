@@ -235,16 +235,152 @@ func (r *GuardrailsRepository) GetDeployment(client k8s.KubernetesClientInterfac
 	return detail, nil
 }
 
-// deploymentNamePattern matches DNS-1123 lowercase names up to 63 characters.
-var deploymentNamePattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
+// dns1123NamePattern matches DNS-1123 lowercase names up to 63 characters.
+var dns1123NamePattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
 
 // ValidateDeploymentName checks that the deployment name is a valid
 // DNS-1123 lowercase name suitable for both the CR and the derived ConfigMap.
 func ValidateDeploymentName(name string) error {
-	if !deploymentNamePattern.MatchString(name) {
+	if !dns1123NamePattern.MatchString(name) {
 		return fmt.Errorf("invalid deployment name %q: must be lowercase alphanumeric with hyphens, start and end with alphanumeric, and be at most 63 characters", name)
 	}
 	return nil
+}
+
+// ValidateTemplateName checks that the template name is a valid DNS-1123
+// lowercase name suitable for the ConfigMap.
+func ValidateTemplateName(name string) error {
+	if !dns1123NamePattern.MatchString(name) {
+		return fmt.Errorf("invalid template name %q: must be lowercase alphanumeric with hyphens, start and end with alphanumeric, and be at most 63 characters", name)
+	}
+	return nil
+}
+
+// maxTemplateConfigSize bounds the config.yaml accepted for user templates
+// (ConfigMap values are limited to 1 MiB by the API server).
+const maxTemplateConfigSize = 512 * 1024
+
+// NotDashboardManagedError reports an update attempt against a template
+// ConfigMap the dashboard does not own.
+type NotDashboardManagedError struct {
+	Name string
+}
+
+func (e *NotDashboardManagedError) Error() string {
+	return fmt.Sprintf("template %s was not created by the dashboard and cannot be edited here", e.Name)
+}
+
+// validateTemplateConfigYAML checks that the config.yaml parses as a YAML
+// mapping and is within the size bound.
+func validateTemplateConfigYAML(configYAML string) error {
+	if strings.TrimSpace(configYAML) == "" {
+		return fmt.Errorf("configYAML is required")
+	}
+	if len(configYAML) > maxTemplateConfigSize {
+		return fmt.Errorf("configYAML must be at most %d bytes", maxTemplateConfigSize)
+	}
+	var parsed map[string]interface{}
+	if err := yaml.Unmarshal([]byte(configYAML), &parsed); err != nil {
+		return fmt.Errorf("configYAML is not valid YAML: %w", err)
+	}
+	if parsed == nil {
+		return fmt.Errorf("configYAML must be a YAML mapping")
+	}
+	return nil
+}
+
+// templateAnnotations builds the annotations for a user-created template
+// ConfigMap from the upsert request.
+func templateAnnotations(description string) map[string]string {
+	annotations := map[string]string{}
+	if trimmed := strings.TrimSpace(description); trimmed != "" {
+		annotations[descriptionAnnotation] = trimmed
+	}
+	return annotations
+}
+
+// CreateTemplate creates a user guardrail template (a single config.yaml) as
+// a ConfigMap in the user's namespace, labeled so it merges into the template
+// catalog and is recognizable as dashboard-managed.
+func (r *GuardrailsRepository) CreateTemplate(
+	client k8s.KubernetesClientInterface,
+	ctx context.Context,
+	request models.GuardrailTemplateUpsertRequest,
+) (*models.GuardrailTemplate, error) {
+	if err := ValidateTemplateName(request.Name); err != nil {
+		return nil, err
+	}
+	if err := validateTemplateConfigYAML(request.ConfigYAML); err != nil {
+		return nil, err
+	}
+
+	configMap := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: request.Name,
+			Labels: map[string]string{
+				"nemo-guardrails-config":   "true",
+				"opendatahub.io/dashboard": "true",
+			},
+			Annotations: templateAnnotations(request.Description),
+		},
+		Data: map[string]string{
+			constants.GuardrailsConfigYAMLKey: request.ConfigYAML,
+		},
+	}
+	created, err := client.CreateConfigMap(ctx, request.Namespace, configMap)
+	if err != nil {
+		return nil, err
+	}
+
+	template := newTemplateModel(created)
+	template.Source = "user"
+	return &template, nil
+}
+
+// UpdateTemplate updates a dashboard-created user template's config.yaml and
+// description. Templates not created by the dashboard are rejected so
+// operator-managed and hand-written ConfigMaps are never modified.
+func (r *GuardrailsRepository) UpdateTemplate(
+	client k8s.KubernetesClientInterface,
+	ctx context.Context,
+	namespace, name string,
+	request models.GuardrailTemplateUpsertRequest,
+) (*models.GuardrailTemplate, error) {
+	if err := ValidateTemplateName(name); err != nil {
+		return nil, err
+	}
+	if err := validateTemplateConfigYAML(request.ConfigYAML); err != nil {
+		return nil, err
+	}
+
+	configMap, err := client.GetConfigMap(ctx, namespace, name)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil, err
+		}
+		return nil, fmt.Errorf("error fetching guardrail template %s: %w", name, err)
+	}
+	if configMap.Labels[dashboardManagedLabel] != "true" {
+		return nil, &NotDashboardManagedError{Name: name}
+	}
+
+	// Preserve any other keys (for example rails.co) the template may carry.
+	data := configMap.Data
+	if data == nil {
+		data = map[string]string{}
+	}
+	data[constants.GuardrailsConfigYAMLKey] = request.ConfigYAML
+	configMap.Data = data
+	configMap.Annotations = templateAnnotations(request.Description)
+
+	updated, err := client.UpdateConfigMap(ctx, namespace, configMap)
+	if err != nil {
+		return nil, err
+	}
+
+	template := newTemplateModel(updated)
+	template.Source = "user"
+	return &template, nil
 }
 
 // CreateDeploymentFromTemplate deploys a guardrail template into a namespace:

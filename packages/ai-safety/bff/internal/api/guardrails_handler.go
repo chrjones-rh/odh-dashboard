@@ -25,14 +25,147 @@ type GuardrailDeploymentEnvelope Envelope[models.GuardrailDeploymentDetail, None
 type CreatedGuardrailDeploymentEnvelope Envelope[models.GuardrailDeployment, None]
 type ServingModelsEnvelope Envelope[[]models.ServingModel, None]
 type GuardrailTestResultEnvelope Envelope[models.GuardrailTestResult, None]
+type UpsertedGuardrailTemplateEnvelope Envelope[models.GuardrailTemplate, None]
 
 // CreateGuardrailTemplateHandler creates a user guardrail template (a single
 // config.yaml) as a ConfigMap in the user's namespace. Access is gated by a
 // SelfSubjectAccessReview for ConfigMap creation in the namespace.
+func (app *App) CreateGuardrailTemplateHandler(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
+	ctx := r.Context()
+
+	identity, ok := ctx.Value(constants.RequestIdentityKey).(*kubernetes.RequestIdentity)
+	if !ok || identity == nil {
+		app.badRequestResponse(w, r, fmt.Errorf("missing RequestIdentity in context"))
+		return
+	}
+
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		app.badRequestResponse(w, r, fmt.Errorf("failed to read request body: %w", err))
+		return
+	}
+	var request models.GuardrailTemplateUpsertRequest
+	if err := json.Unmarshal(body, &request); err != nil {
+		app.badRequestResponse(w, r, fmt.Errorf("invalid request body: %w", err))
+		return
+	}
+	if request.Name == "" || request.Namespace == "" || request.ConfigYAML == "" {
+		app.badRequestResponse(w, r, fmt.Errorf("name, namespace, and configYAML are required"))
+		return
+	}
+	if request.Namespace == app.config.GuardrailsTemplateNamespace {
+		app.badRequestResponse(w, r, fmt.Errorf("templates cannot be created in the platform template namespace %s", app.config.GuardrailsTemplateNamespace))
+		return
+	}
+
+	client, err := app.kubernetesClientFactory.GetClient(ctx)
+	if err != nil {
+		app.serverErrorResponse(w, r, fmt.Errorf("failed to get Kubernetes client: %w", err))
+		return
+	}
+
+	allowed, err := client.CanCreateConfigMaps(ctx, identity, request.Namespace)
+	if err != nil {
+		app.serverErrorResponse(w, r, err)
+		return
+	}
+	if !allowed {
+		app.forbiddenResponse(w, r, fmt.Sprintf("user is not allowed to create configmaps in namespace %s", request.Namespace))
+		return
+	}
+
+	template, err := app.repositories.Guardrails.CreateTemplate(client, ctx, request)
+	if err != nil {
+		switch {
+		case apierrors.IsAlreadyExists(err):
+			app.conflictResponse(w, r, err)
+		default:
+			app.badRequestResponse(w, r, err)
+		}
+		return
+	}
+
+	envelope := UpsertedGuardrailTemplateEnvelope{Data: *template}
+	if err := app.WriteJSON(w, http.StatusCreated, envelope, nil); err != nil {
+		app.serverErrorResponse(w, r, err)
+	}
+}
+
 // UpdateGuardrailTemplateHandler updates a dashboard-created user template's
 // config.yaml and description. Access is gated by a SelfSubjectAccessReview
 // for ConfigMap updates in the namespace; the platform template namespace is
 // always rejected.
+func (app *App) UpdateGuardrailTemplateHandler(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
+	ctx := r.Context()
+	name := ps.ByName("name")
+	namespace := r.URL.Query().Get(string(constants.NamespaceHeaderParameterKey))
+	if namespace == "" {
+		app.badRequestResponse(w, r, fmt.Errorf("namespace query parameter is required"))
+		return
+	}
+
+	identity, ok := ctx.Value(constants.RequestIdentityKey).(*kubernetes.RequestIdentity)
+	if !ok || identity == nil {
+		app.badRequestResponse(w, r, fmt.Errorf("missing RequestIdentity in context"))
+		return
+	}
+
+	if namespace == app.config.GuardrailsTemplateNamespace {
+		app.badRequestResponse(w, r, fmt.Errorf("platform templates cannot be edited"))
+		return
+	}
+
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		app.badRequestResponse(w, r, fmt.Errorf("failed to read request body: %w", err))
+		return
+	}
+	var request models.GuardrailTemplateUpsertRequest
+	if err := json.Unmarshal(body, &request); err != nil {
+		app.badRequestResponse(w, r, fmt.Errorf("invalid request body: %w", err))
+		return
+	}
+	if request.ConfigYAML == "" {
+		app.badRequestResponse(w, r, fmt.Errorf("configYAML is required"))
+		return
+	}
+
+	client, err := app.kubernetesClientFactory.GetClient(ctx)
+	if err != nil {
+		app.serverErrorResponse(w, r, fmt.Errorf("failed to get Kubernetes client: %w", err))
+		return
+	}
+
+	allowed, err := client.CanUpdateConfigMaps(ctx, identity, namespace)
+	if err != nil {
+		app.serverErrorResponse(w, r, err)
+		return
+	}
+	if !allowed {
+		app.forbiddenResponse(w, r, fmt.Sprintf("user is not allowed to update configmaps in namespace %s", namespace))
+		return
+	}
+
+	template, err := app.repositories.Guardrails.UpdateTemplate(client, ctx, namespace, name, request)
+	if err != nil {
+		var notManaged *repositories.NotDashboardManagedError
+		switch {
+		case apierrors.IsNotFound(err):
+			app.notFoundResponse(w, r)
+		case errors.As(err, &notManaged):
+			app.forbiddenResponse(w, r, err.Error())
+		default:
+			app.badRequestResponse(w, r, err)
+		}
+		return
+	}
+
+	envelope := UpsertedGuardrailTemplateEnvelope{Data: *template}
+	if err := app.WriteJSON(w, http.StatusOK, envelope, nil); err != nil {
+		app.serverErrorResponse(w, r, err)
+	}
+}
+
 // GetServingModelsHandler lists the models served in the requested namespace
 // that a guardrail deployment can be wired to. Access is gated by
 // SelfSubjectAccessReviews for the KServe serving resources; when the user may

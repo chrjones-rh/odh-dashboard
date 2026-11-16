@@ -111,6 +111,13 @@ export type GuardrailModelWiring = {
   endpoint: string;
 };
 
+export type GuardrailTemplateUpsertRequest = {
+  name: string;
+  namespace: string;
+  description?: string;
+  configYAML: string;
+};
+
 export type GuardrailDeploymentCreateRequest = {
   name: string;
   namespace: string;
