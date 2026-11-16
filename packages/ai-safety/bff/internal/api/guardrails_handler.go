@@ -2,9 +2,11 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 
@@ -22,7 +24,15 @@ type GuardrailDeploymentsEnvelope Envelope[[]models.GuardrailDeployment, None]
 type GuardrailDeploymentEnvelope Envelope[models.GuardrailDeploymentDetail, None]
 type CreatedGuardrailDeploymentEnvelope Envelope[models.GuardrailDeployment, None]
 type ServingModelsEnvelope Envelope[[]models.ServingModel, None]
+type GuardrailTestResultEnvelope Envelope[models.GuardrailTestResult, None]
 
+// CreateGuardrailTemplateHandler creates a user guardrail template (a single
+// config.yaml) as a ConfigMap in the user's namespace. Access is gated by a
+// SelfSubjectAccessReview for ConfigMap creation in the namespace.
+// UpdateGuardrailTemplateHandler updates a dashboard-created user template's
+// config.yaml and description. Access is gated by a SelfSubjectAccessReview
+// for ConfigMap updates in the namespace; the platform template namespace is
+// always rejected.
 // GetServingModelsHandler lists the models served in the requested namespace
 // that a guardrail deployment can be wired to. Access is gated by
 // SelfSubjectAccessReviews for the KServe serving resources; when the user may
@@ -379,4 +389,79 @@ func (app *App) DeleteGuardrailDeploymentHandler(w http.ResponseWriter, r *http.
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// TestGuardrailDeploymentHandler runs a test message through a guardrail
+// deployment: the BFF proxies the check and chat completion calls to the
+// guardrail service with the requesting user's token. Access is gated by a
+// SelfSubjectAccessReview for the nemoguardrails resource in the namespace;
+// the guardrail's own kube-rbac-proxy additionally authorizes the forwarded
+// token against the service resource.
+func (app *App) TestGuardrailDeploymentHandler(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
+	ctx := r.Context()
+	name := ps.ByName("name")
+	namespace, ok := ctx.Value(constants.NamespaceHeaderParameterKey).(string)
+	if !ok || namespace == "" {
+		app.badRequestResponse(w, r, fmt.Errorf("missing namespace in request context"))
+		return
+	}
+
+	identity, ok := ctx.Value(constants.RequestIdentityKey).(*kubernetes.RequestIdentity)
+	if !ok || identity == nil {
+		app.badRequestResponse(w, r, fmt.Errorf("missing RequestIdentity in context"))
+		return
+	}
+
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		app.badRequestResponse(w, r, fmt.Errorf("failed to read request body: %w", err))
+		return
+	}
+	var request models.GuardrailTestRequest
+	if err := json.Unmarshal(body, &request); err != nil {
+		app.badRequestResponse(w, r, fmt.Errorf("invalid request body: %w", err))
+		return
+	}
+	if strings.TrimSpace(request.Message) == "" {
+		app.badRequestResponse(w, r, fmt.Errorf("message is required"))
+		return
+	}
+
+	client, err := app.kubernetesClientFactory.GetClient(ctx)
+	if err != nil {
+		app.serverErrorResponse(w, r, fmt.Errorf("failed to get Kubernetes client: %w", err))
+		return
+	}
+
+	allowed, err := client.CanListNemoGuardrails(ctx, identity, namespace)
+	if err != nil {
+		app.serverErrorResponse(w, r, err)
+		return
+	}
+	if !allowed {
+		app.forbiddenResponse(w, r, fmt.Sprintf("user is not allowed to list NemoGuardrails in namespace %s", namespace))
+		return
+	}
+
+	result, err := app.repositories.Guardrails.TestDeployment(client, ctx, namespace, name, request)
+	if err != nil {
+		var notReady *repositories.DeploymentNotReadyError
+		var notWired *repositories.ModelNotWiredError
+		switch {
+		case apierrors.IsNotFound(err):
+			app.notFoundResponse(w, r)
+		case errors.As(err, &notReady):
+			app.conflictResponse(w, r, err)
+		case errors.As(err, &notWired):
+			app.badRequestResponse(w, r, err)
+		default:
+			app.serverErrorResponse(w, r, err)
+		}
+		return
+	}
+
+	envelope := GuardrailTestResultEnvelope{Data: *result}
+	if err := app.WriteJSON(w, http.StatusOK, envelope, nil); err != nil {
+		app.serverErrorResponse(w, r, err)
+	}
 }

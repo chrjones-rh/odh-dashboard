@@ -38,6 +38,7 @@ const (
 	GuardrailsTemplateDetailPath   = ApiPathPrefix + "/guardrails/templates/:name"
 	GuardrailsDeploymentsPath      = ApiPathPrefix + "/guardrails/deployments"
 	GuardrailsDeploymentDetailPath = ApiPathPrefix + "/guardrails/deployments/:name"
+	GuardrailsDeploymentTestPath   = ApiPathPrefix + "/guardrails/deployments/:name/test"
 	ModelsPath                     = ApiPathPrefix + "/models"
 )
 
@@ -189,6 +190,8 @@ func (app *App) Routes() http.Handler {
 	apiRouter.POST(GuardrailsDeploymentsPath, app.CreateGuardrailDeploymentHandler)
 	apiRouter.GET(GuardrailsDeploymentDetailPath, app.AttachNamespace(app.GetGuardrailDeploymentHandler))
 	apiRouter.DELETE(GuardrailsDeploymentDetailPath, app.AttachNamespace(app.DeleteGuardrailDeploymentHandler))
+	apiRouter.POST(GuardrailsDeploymentTestPath, app.AttachNamespace(app.TestGuardrailDeploymentHandler))
+
 	// Serving models for guardrail model wiring
 	apiRouter.GET(ModelsPath, app.AttachNamespace(app.GetServingModelsHandler))
 

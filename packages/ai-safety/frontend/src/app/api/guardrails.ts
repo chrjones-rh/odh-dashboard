@@ -13,6 +13,8 @@ import {
   GuardrailDeploymentDetail,
   GuardrailTemplate,
   GuardrailTemplateDetail,
+  GuardrailTestRequest,
+  GuardrailTestResult,
   ServingModel,
 } from '~/app/types';
 
@@ -114,6 +116,25 @@ export const getServingModels =
       }
       throw new Error('Invalid response format');
     });
+
+export const testGuardrailDeployment = (
+  hostPath: string,
+  namespace: string,
+  name: string,
+  request: GuardrailTestRequest,
+): Promise<GuardrailTestResult> =>
+  handleRestFailures(
+    restCREATE(
+      hostPath,
+      `${URL_PREFIX}/api/${BFF_API_VERSION}/guardrails/deployments/${name}/test`,
+      request,
+    ),
+  ).then((response) => {
+    if (isModArchResponse<GuardrailTestResult>(response)) {
+      return response.data;
+    }
+    throw new Error('Invalid response format');
+  });
 
 export const deleteGuardrailDeployment = (
   hostPath: string,

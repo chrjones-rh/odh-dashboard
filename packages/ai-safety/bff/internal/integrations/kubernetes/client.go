@@ -35,6 +35,8 @@ type KubernetesClientInterface interface {
 	ListInferenceServices(ctx context.Context, namespace string) ([]unstructured.Unstructured, error)
 	// ListLLMInferenceServices lists KServe LLMInferenceServices in the namespace.
 	ListLLMInferenceServices(ctx context.Context, namespace string) ([]unstructured.Unstructured, error)
+	// BearerToken returns the raw bearer token this client authenticates with.
+	BearerToken() (string, error)
 	// CanListNemoGuardrails reports whether the request identity may list
 	// NemoGuardrails custom resources in the namespace.
 	CanListNemoGuardrails(ctx context.Context, identity *RequestIdentity, namespace string) (bool, error)

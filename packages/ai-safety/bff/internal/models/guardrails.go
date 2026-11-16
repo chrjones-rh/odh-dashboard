@@ -128,3 +128,28 @@ type ServingModel struct {
 	// Ready reports whether the serving resource reports a Ready condition.
 	Ready bool `json:"ready"`
 }
+
+// GuardrailTestRequest is the request body for testing a guardrail deployment.
+type GuardrailTestRequest struct {
+	// Message is the user message to run through the guardrails.
+	Message string `json:"message"`
+	// Model optionally overrides the model name; defaults to the deployment's
+	// configured main model.
+	Model string `json:"model,omitempty"`
+}
+
+// GuardrailTestResult is the outcome of running a test message through a
+// guardrail deployment.
+type GuardrailTestResult struct {
+	// Status is the guardrail verdict: "passed", "blocked", or "unknown" when
+	// the deployment's configuration does not support check requests.
+	Status string `json:"status"`
+	// Rail names the rail that produced the verdict, when the guardrail reports it.
+	Rail string `json:"rail,omitempty"`
+	// Content is the guardrail's response content (the block message when blocked).
+	Content string `json:"content,omitempty"`
+	// ModelResponse is the model's answer for a message that passed the rails.
+	ModelResponse string `json:"modelResponse,omitempty"`
+	// ConfigID is the guardrails configuration id the server reports.
+	ConfigID string `json:"configId,omitempty"`
+}

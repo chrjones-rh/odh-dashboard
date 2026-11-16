@@ -9,6 +9,7 @@ import {
   Label,
   Spinner,
   Title,
+  Tooltip,
 } from '@patternfly/react-core';
 import { SearchIcon } from '@patternfly/react-icons';
 import { Table, Tbody, Td, Th, Thead, Tr } from '@patternfly/react-table';
@@ -47,6 +48,7 @@ const StatusLabel: React.FC<{ deployment: GuardrailDeployment }> = ({ deployment
 
 type DeploymentsTabProps = {
   onSelect: (name: string | null) => void;
+  onTest: (deployment: GuardrailDeployment) => void;
   onDelete: (deployment: GuardrailDeployment) => void;
   deployments: GuardrailDeployment[];
   deploymentsLoaded: boolean;
@@ -55,6 +57,7 @@ type DeploymentsTabProps = {
 
 const DeploymentsTab: React.FC<DeploymentsTabProps> = ({
   onSelect,
+  onTest,
   onDelete,
   deployments,
   deploymentsLoaded,
@@ -84,8 +87,8 @@ const DeploymentsTab: React.FC<DeploymentsTabProps> = ({
           <Th width={10}>Status</Th>
           <Th width={25}>Configuration</Th>
           <Th width={20}>Endpoint</Th>
-          <Th width={15}>Created</Th>
-          <Th width={10}>Actions</Th>
+          <Th width={10}>Created</Th>
+          <Th width={15}>Actions</Th>
         </Tr>
       </Thead>
       <Tbody>
@@ -112,6 +115,24 @@ const DeploymentsTab: React.FC<DeploymentsTabProps> = ({
             <Td dataLabel="Endpoint">{deployment.endpoint ?? '—'}</Td>
             <Td dataLabel="Created">{formatDate(deployment.createdAt)}</Td>
             <Td dataLabel="Actions">
+              <Tooltip
+                content={
+                  deployment.ready && deployment.modelWired
+                    ? 'Run a test message through this guardrail'
+                    : 'The deployment must be ready and wired to a model before it can be tested'
+                }
+              >
+                <span className="pf-v6-u-display-inline-block">
+                  <Button
+                    variant="secondary"
+                    isDisabled={!deployment.ready || !deployment.modelWired}
+                    onClick={() => onTest(deployment)}
+                    data-testid={`guardrails-deployment-test-${deployment.name}`}
+                  >
+                    Test
+                  </Button>
+                </span>
+              </Tooltip>{' '}
               <Button
                 variant="danger"
                 onClick={() => onDelete(deployment)}

@@ -127,3 +127,16 @@ export type ServingModel = {
   endpoint?: string;
   ready: boolean;
 };
+
+export type GuardrailTestRequest = {
+  message: string;
+  model?: string;
+};
+
+export type GuardrailTestResult = {
+  status: 'passed' | 'blocked' | 'unknown' | string;
+  rail?: string;
+  content?: string;
+  modelResponse?: string;
+  configId?: string;
+};

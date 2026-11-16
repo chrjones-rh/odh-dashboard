@@ -47,4 +47,12 @@ const (
 	// EnableAuthAnnotation marks KServe resources that terminate TLS themselves;
 	// their in-cluster endpoints are served over https.
 	EnableAuthAnnotation = "security.opendatahub.io/enable-auth"
+
+	// ServiceCAConfigMapKey is the ConfigMap key holding the OpenShift service
+	// serving CA bundle (PEM).
+	ServiceCAConfigMapKey = "service-ca.crt"
+	// ServiceCAConfigMapFallback is the namespace-synced ConfigMap holding the
+	// service serving CA bundle, used when the operator-managed per-deployment
+	// bundle is not present.
+	ServiceCAConfigMapFallback = "openshift-service-ca.crt"
 )

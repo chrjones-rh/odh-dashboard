@@ -99,6 +99,9 @@ func (f *guardrailsFakeClient) CanListLLMInferenceServices(_ context.Context, _ 
 	return f.allowList, nil
 }
 
+func (f *guardrailsFakeClient) BearerToken() (string, error) {
+	return "test-token", nil
+}
 
 func (f *guardrailsFakeClient) CanListConfigMaps(_ context.Context, _ *kubernetes.RequestIdentity, _ string) (bool, error) {
 	return f.allowList, nil
@@ -753,3 +756,81 @@ func TestCreateGuardrailDeploymentHandlerInvalidModel(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, recorder.Code)
 }
 
+func guardrailsTestReadyWiredDeploymentCR() unstructured.Unstructured {
+	cr := guardrailsTestDeploymentCR()
+	cr.Object["status"] = map[string]interface{}{
+		"phase":    "Ready",
+		"endpoint": "https://my-guardrails.test-ns.svc.cluster.local",
+		"conditions": []interface{}{
+			map[string]interface{}{"type": "DeploymentReady", "status": "True"},
+		},
+	}
+	cr.Object["spec"].(map[string]interface{})["env"] = []interface{}{
+		map[string]interface{}{"name": "MAIN_MODEL_BASE_URL", "value": "https://model.test-ns.svc.cluster.local:8000/v1"},
+	}
+	return cr
+}
+
+func TestTestGuardrailDeploymentHandlerMissingMessage(t *testing.T) {
+	client := &guardrailsFakeClient{
+		nemoGuardrails: []unstructured.Unstructured{guardrailsTestReadyWiredDeploymentCR()},
+		allowList:      true,
+	}
+
+	recorder, _ := performGuardrailsRequest(t, client, http.MethodPost, "/api/v1/guardrails/deployments/my-guardrails/test?namespace=test-ns", map[string]interface{}{})
+	assert.Equal(t, http.StatusBadRequest, recorder.Code)
+}
+
+func TestTestGuardrailDeploymentHandlerNotFound(t *testing.T) {
+	client := &guardrailsFakeClient{allowList: true}
+
+	recorder, _ := performGuardrailsRequest(t, client, http.MethodPost, "/api/v1/guardrails/deployments/missing/test?namespace=test-ns", map[string]interface{}{
+		"message": "hello",
+	})
+	assert.Equal(t, http.StatusNotFound, recorder.Code)
+}
+
+func TestTestGuardrailDeploymentHandlerNotReady(t *testing.T) {
+	// The default test CR has no status.endpoint and no DeploymentReady-wired state.
+	client := &guardrailsFakeClient{
+		nemoGuardrails: []unstructured.Unstructured{guardrailsTestDeploymentCR()},
+		allowList:      true,
+	}
+
+	recorder, _ := performGuardrailsRequest(t, client, http.MethodPost, "/api/v1/guardrails/deployments/my-guardrails/test?namespace=test-ns", map[string]interface{}{
+		"message": "hello",
+	})
+	assert.Equal(t, http.StatusConflict, recorder.Code)
+}
+
+func TestTestGuardrailDeploymentHandlerNotWired(t *testing.T) {
+	cr := guardrailsTestDeploymentCR()
+	cr.Object["status"] = map[string]interface{}{
+		"phase":    "Ready",
+		"endpoint": "https://my-guardrails.test-ns.svc.cluster.local",
+		"conditions": []interface{}{
+			map[string]interface{}{"type": "DeploymentReady", "status": "True"},
+		},
+	}
+	client := &guardrailsFakeClient{
+		nemoGuardrails: []unstructured.Unstructured{cr},
+		allowList:      true,
+	}
+
+	recorder, _ := performGuardrailsRequest(t, client, http.MethodPost, "/api/v1/guardrails/deployments/my-guardrails/test?namespace=test-ns", map[string]interface{}{
+		"message": "hello",
+	})
+	assert.Equal(t, http.StatusBadRequest, recorder.Code)
+}
+
+func TestTestGuardrailDeploymentHandlerForbidden(t *testing.T) {
+	client := &guardrailsFakeClient{
+		nemoGuardrails: []unstructured.Unstructured{guardrailsTestReadyWiredDeploymentCR()},
+		allowList:      false,
+	}
+
+	recorder, _ := performGuardrailsRequest(t, client, http.MethodPost, "/api/v1/guardrails/deployments/my-guardrails/test?namespace=test-ns", map[string]interface{}{
+		"message": "hello",
+	})
+	assert.Equal(t, http.StatusForbidden, recorder.Code)
+}

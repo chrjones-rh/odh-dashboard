@@ -94,6 +94,10 @@ func (kc *InternalKubernetesClient) CanListConfigMaps(ctx context.Context, ident
 	return kc.subjectAccessReview(ctx, identity, "list", "", "configmaps", namespace)
 }
 
+// CanCreateConfigMaps performs a SubjectAccessReview for the request identity
+// against ConfigMap creation in the namespace.
+// CanUpdateConfigMaps performs a SubjectAccessReview for the request identity
+// against ConfigMap updates in the namespace.
 // CanListInferenceServices performs a SubjectAccessReview for the request
 // identity against KServe InferenceServices in the namespace.
 func (kc *InternalKubernetesClient) CanListInferenceServices(ctx context.Context, identity *RequestIdentity, namespace string) (bool, error) {

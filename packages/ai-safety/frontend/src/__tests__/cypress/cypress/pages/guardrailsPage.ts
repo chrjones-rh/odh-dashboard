@@ -69,6 +69,30 @@ class GuardrailsPage {
     return cy.findByTestId('guardrail-deployment-model-endpoint-input');
   }
 
+  findTestModal() {
+    return cy.findByTestId('test-guardrail-modal');
+  }
+
+  findTestMessageInput() {
+    return cy.findByTestId('guardrail-test-message-input');
+  }
+
+  findTestRunButton() {
+    return cy.findByTestId('guardrail-test-run-button');
+  }
+
+  findTestResult() {
+    return cy.findByTestId('guardrail-test-result');
+  }
+
+  findTestVerdict() {
+    return cy.findByTestId('guardrail-test-verdict');
+  }
+
+  findTestButton(name: string) {
+    return cy.findByTestId(`guardrails-deployment-test-${name}`);
+  }
+
   findDeploymentRow(name: string) {
     return cy.findByTestId(`guardrails-deployment-row-${name}`);
   }

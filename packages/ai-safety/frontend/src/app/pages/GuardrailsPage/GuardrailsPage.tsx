@@ -17,6 +17,7 @@ import TemplateDrawerPanel from './TemplateDrawerPanel';
 import DeploymentDrawerPanel from './DeploymentDrawerPanel';
 import DeployGuardrailModal from './DeployGuardrailModal';
 import DeleteGuardrailModal from './DeleteGuardrailModal';
+import TestGuardrailModal from './TestGuardrailModal';
 import NamespaceSelector from './NamespaceSelector';
 
 const TEMPLATES_TAB = 0;
@@ -28,6 +29,7 @@ const GuardrailsPage: React.FC = () => {
   const [selectedDeployment, setSelectedDeployment] = React.useState<string | null>(null);
   const [deployTemplate, setDeployTemplate] = React.useState<GuardrailTemplate | null>(null);
   const [deleteDeployment, setDeleteDeployment] = React.useState<GuardrailDeployment | null>(null);
+  const [testDeployment, setTestDeployment] = React.useState<GuardrailDeployment | null>(null);
 
   // The selected namespace is persisted (last used) and restored on load,
   // falling back to the first accessible namespace — the same pattern the
@@ -136,6 +138,7 @@ const GuardrailsPage: React.FC = () => {
                 >
                   <DeploymentsTab
                     onSelect={setSelectedDeployment}
+                    onTest={setTestDeployment}
                     onDelete={setDeleteDeployment}
                     deployments={deployments}
                     deploymentsLoaded={deploymentsLoaded}
@@ -159,6 +162,7 @@ const GuardrailsPage: React.FC = () => {
         onClose={() => setDeleteDeployment(null)}
         onDeleted={onDeleted}
       />
+      <TestGuardrailModal deployment={testDeployment} onClose={() => setTestDeployment(null)} />
     </>
   );
 };
