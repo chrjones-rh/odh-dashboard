@@ -580,13 +580,17 @@ func (app *App) TestGuardrailDeploymentHandler(w http.ResponseWriter, r *http.Re
 	if err != nil {
 		var notReady *repositories.DeploymentNotReadyError
 		var notWired *repositories.ModelNotWiredError
+		var nameRequired *repositories.ModelNameRequiredError
+		var upstream *repositories.GuardrailUpstreamError
 		switch {
 		case apierrors.IsNotFound(err):
 			app.notFoundResponse(w, r)
 		case errors.As(err, &notReady):
 			app.conflictResponse(w, r, err)
-		case errors.As(err, &notWired):
+		case errors.As(err, &notWired), errors.As(err, &nameRequired):
 			app.badRequestResponse(w, r, err)
+		case errors.As(err, &upstream):
+			app.badGatewayResponse(w, r, err)
 		default:
 			app.serverErrorResponse(w, r, err)
 		}

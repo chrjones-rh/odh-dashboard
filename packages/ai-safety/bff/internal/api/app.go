@@ -149,10 +149,14 @@ func NewApp(cfg config.EnvConfig, logger *slog.Logger) (*App, error) {
 		config:                  cfg,
 		logger:                  logger,
 		kubernetesClientFactory: k8sFactory,
-		repositories:            repositories.NewRepositories(),
-		testEnv:                 testEnv,
-		rootCAs:                 rootCAs,
-		bffClientFactory:        bffFactory,
+		repositories: repositories.NewRepositories(&repositories.GuardrailsLocalConfig{
+			DialMap:     cfg.GuardrailsDialMap,
+			RouteSuffix: cfg.GuardrailsRouteSuffix,
+			RouteCAs:    rootCAs,
+		}),
+		testEnv:          testEnv,
+		rootCAs:          rootCAs,
+		bffClientFactory: bffFactory,
 	}
 
 	app.wsTracker = proxy.NewConnectionTracker(app.logger)

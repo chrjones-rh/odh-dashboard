@@ -35,11 +35,21 @@ func main() {
 
 	flag.StringVar(&cfg.StaticAssetsDir, "static-assets-dir", "./static", "Configure frontend static assets root directory")
 	flag.TextVar(&cfg.LogLevel, "log-level", parseLevel(getEnvAsString("LOG_LEVEL", "INFO")), "Sets server log level, possible values: error, warn, info, debug")
-	flag.Func("allowed-origins", "Sets allowed origins for CORS purposes, accepts a comma separated list of origins or * to allow all, default none", newOriginParser(&cfg.AllowedOrigins, getEnvAsString("ALLOWED_ORIGINS", "")))
+	// flag.Func only invokes its function when the flag is passed on the
+	// command line, so environment defaults for these flags are applied
+	// eagerly below; a command-line flag replaces the env-derived value.
+	applyEnvDefault := func(parse func(string) error, envVar string) {
+		if err := parse(getEnvAsString(envVar, "")); err != nil {
+			fmt.Fprintf(os.Stderr, "invalid %s: %v\n", envVar, err)
+			os.Exit(1)
+		}
+	}
+	flag.Func("allowed-origins", "Sets allowed origins for CORS purposes, accepts a comma separated list of origins or * to allow all, default none", newOriginParser(&cfg.AllowedOrigins))
+	applyEnvDefault(newOriginParser(&cfg.AllowedOrigins), "ALLOWED_ORIGINS")
 	// bundle-paths accepts a comma-separated list of CA bundle file paths to trust for outbound TLS.
 	// If not provided via flag, it can be set via BUNDLE_PATHS env var (comma-separated). Defaults to empty.
-	defaultBundlePaths := getEnvAsString("BUNDLE_PATHS", "")
-	flag.Func("bundle-paths", "Comma-separated list of PEM CA bundle file paths to trust for outbound TLS (optional)", newOriginParser(&cfg.BundlePaths, defaultBundlePaths))
+	flag.Func("bundle-paths", "Comma-separated list of PEM CA bundle file paths to trust for outbound TLS (optional)", newOriginParser(&cfg.BundlePaths))
+	applyEnvDefault(newOriginParser(&cfg.BundlePaths), "BUNDLE_PATHS")
 	flag.StringVar(&cfg.AuthMethod, "auth-method", "user_token", "Authentication method (internal or user_token)")
 	flag.StringVar(&cfg.AuthTokenHeader, "auth-token-header", getEnvAsString("AUTH_TOKEN_HEADER", config.DefaultAuthTokenHeader), "Header used to extract the token (e.g., Authorization)")
 	flag.StringVar(&cfg.AuthTokenPrefix, "auth-token-prefix", getEnvAsString("AUTH_TOKEN_PREFIX", config.DefaultAuthTokenPrefix), "Prefix used in the token header (e.g., 'Bearer ')")
@@ -47,6 +57,14 @@ func main() {
 	flag.StringVar(&cfg.GuardrailsTemplateNamespace, "guardrails-template-namespace",
 		getEnvAsString("GUARDRAILS_TEMPLATE_NAMESPACE", constants.DefaultGuardrailsTemplateNamespace),
 		"Namespace holding the guardrail configuration template ConfigMaps")
+
+	flag.Func("guardrails-dial-map", "Local development override mapping guardrail service hostnames to alternate dial addresses (e.g. my-guardrail.my-project.svc.cluster.local=127.0.0.1:9443), comma-separated; pair with `oc port-forward`",
+		newDialMapParser(&cfg.GuardrailsDialMap))
+	applyEnvDefault(newDialMapParser(&cfg.GuardrailsDialMap), "GUARDRAILS_DIAL_MAP")
+
+	flag.StringVar(&cfg.GuardrailsRouteSuffix, "guardrails-route-suffix",
+		getEnvAsString("GUARDRAILS_ROUTE_SUFFIX", ""),
+		"Local development override: reach guardrail services through their routes (<name>-<namespace>.<suffix>) instead of service URLs; trust the ingress CA via bundle-paths")
 
 	// TLS configuration flags
 	flag.BoolVar(&cfg.InsecureSkipVerify, "insecure-skip-verify", getEnvAsBool("INSECURE_SKIP_VERIFY", false), "Skip TLS certificate verification (useful for development, default: false)")

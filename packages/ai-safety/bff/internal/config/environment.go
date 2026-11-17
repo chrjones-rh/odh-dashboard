@@ -109,6 +109,28 @@ type EnvConfig struct {
 	// shipped by the trustyai-service-operator.
 	GuardrailsTemplateNamespace string
 
+	// GuardrailsDialMap is a local-development override for reaching guardrail
+	// services from a BFF running outside the cluster: it maps a guardrail
+	// service hostname (as reported in the deployment status endpoint) to an
+	// alternate dial address, typically an `oc port-forward` listener. The
+	// request URL is left untouched, so TLS SNI and certificate validation
+	// against the service serving CA keep working. Example:
+	//   GUARDRAILS_DIAL_MAP="my-guardrail.my-project.svc.cluster.local=127.0.0.1:9443"
+	// Multiple entries are comma-separated. Unset (the default) changes nothing.
+	GuardrailsDialMap map[string]string
+
+	// GuardrailsRouteSuffix is a local-development override for reaching
+	// guardrail services through their OpenShift routes instead of the
+	// cluster-internal service URLs: every deployment exposes a route at
+	// "<name>-<namespace>.<suffix>", reachable from outside the cluster. The
+	// BFF rewrites the validated service endpoint to the route URL. Route
+	// certificates are signed by the ingress operator CA, not the service
+	// CA — trust it by passing its certificate through BundlePaths. Example:
+	//   GUARDRAILS_ROUTE_SUFFIX="apps.example.com" BUNDLE_PATHS=~/router-ca.pem
+	// Unset (the default) changes nothing; set, it takes precedence over
+	// the dial map.
+	GuardrailsRouteSuffix string
+
 	// ─── DEPRECATED ─────────────────────────────────────────────
 	// The following fields are deprecated and maintained for backward compatibility
 	// Use DeploymentMode instead

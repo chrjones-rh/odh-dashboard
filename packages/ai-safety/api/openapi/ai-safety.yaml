@@ -390,6 +390,8 @@ paths:
           $ref: '#/components/responses/ConflictResponse'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '502':
+          $ref: '#/components/responses/BadGateway'
       operationId: testGuardrailDeployment
       summary: Test Guardrails Deployment
       description: >-
@@ -773,6 +775,15 @@ components:
         isOperatorTemplate:
           description: Whether the ConfigMap is managed by the trustyai-service-operator.
           type: boolean
+        isDashboardManaged:
+          description: Whether the ConfigMap was created by the dashboard (template copies).
+          type: boolean
+        templateName:
+          description: Name of the template the ConfigMap was copied from, when recorded.
+          type: string
+        templateNamespace:
+          description: Namespace of the template the ConfigMap was copied from, when recorded.
+          type: string
         mainModel:
           description: >-
             Model name of the config.yaml main model entry, when present.
@@ -807,6 +818,12 @@ components:
             Whether the deployment is wired to a model (MAIN_MODEL_BASE_URL
             environment variable or a config.yaml main model entry).
           type: boolean
+        mainModel:
+          description: >-
+            Model name of the deployment's config.yaml main model entry, when
+            present. Absent for deployments wired only through the
+            MAIN_MODEL_BASE_URL environment variable.
+          type: string
         endpoint:
           description: In-cluster endpoint reported by the operator, when available.
           type: string
@@ -988,7 +1005,9 @@ components:
         model:
           description: >-
             Optional model name override; defaults to the deployment's
-            configured main model.
+            configured main model or, for deployments wired only through the
+            MAIN_MODEL_BASE_URL environment variable, the model the guardrail
+            service reports through its /v1/models endpoint.
           type: string
     GuardrailTestResult:
       description: The outcome of running a test message through a guardrail deployment.
@@ -1059,6 +1078,12 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
       description: Unexpected internal server error
+    BadGateway:
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+      description: The guardrail service failed or answered with an error
     ConfigResponse:
       content:
         application/json:

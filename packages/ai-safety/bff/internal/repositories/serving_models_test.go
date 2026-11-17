@@ -150,7 +150,7 @@ func TestGetServingModels(t *testing.T) {
 		llmInferenceServices: []unstructured.Unstructured{},
 	}
 
-	repo := NewGuardrailsRepository()
+	repo := NewGuardrailsRepository(nil)
 	models, err := repo.GetServingModels(client, context.Background(), "my-ns")
 	require.NoError(t, err)
 	require.Len(t, models, 1)
@@ -164,7 +164,7 @@ func TestGetServingModelsSkipsForbiddenResources(t *testing.T) {
 		forbidInferenceList: true,
 	}
 
-	repo := NewGuardrailsRepository()
+	repo := NewGuardrailsRepository(nil)
 	models, err := repo.GetServingModels(client, context.Background(), "my-ns")
 	require.NoError(t, err)
 	assert.Empty(t, models)
@@ -176,7 +176,7 @@ func TestGetServingModelsSkipsResourcesWithoutEndpoint(t *testing.T) {
 		inferenceServices: []unstructured.Unstructured{isvc},
 	}
 
-	repo := NewGuardrailsRepository()
+	repo := NewGuardrailsRepository(nil)
 	models, err := repo.GetServingModels(client, context.Background(), "my-ns")
 	require.NoError(t, err)
 	assert.Empty(t, models)

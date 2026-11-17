@@ -16,7 +16,7 @@ const validConfigYAML = "passthrough: true\nrails:\n  input:\n    flows:\n      
 
 func TestCreateTemplate(t *testing.T) {
 	client := &fakeGuardrailsClient{}
-	repo := NewGuardrailsRepository()
+	repo := NewGuardrailsRepository(nil)
 
 	template, err := repo.CreateTemplate(client, context.Background(), models.GuardrailTemplateUpsertRequest{
 		Name:        "my-template",
@@ -42,7 +42,7 @@ func TestCreateTemplate(t *testing.T) {
 
 func TestCreateTemplateInvalidName(t *testing.T) {
 	client := &fakeGuardrailsClient{}
-	repo := NewGuardrailsRepository()
+	repo := NewGuardrailsRepository(nil)
 
 	_, err := repo.CreateTemplate(client, context.Background(), models.GuardrailTemplateUpsertRequest{
 		Name:       "Invalid Name",
@@ -65,7 +65,7 @@ func TestCreateTemplateInvalidYAML(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			client := &fakeGuardrailsClient{}
-			repo := NewGuardrailsRepository()
+			repo := NewGuardrailsRepository(nil)
 
 			_, err := repo.CreateTemplate(client, context.Background(), models.GuardrailTemplateUpsertRequest{
 				Name:       "my-template",
@@ -93,7 +93,7 @@ func dashboardManagedUserTemplate() *fakeGuardrailsClient {
 
 func TestUpdateTemplate(t *testing.T) {
 	client := dashboardManagedUserTemplate()
-	repo := NewGuardrailsRepository()
+	repo := NewGuardrailsRepository(nil)
 
 	template, err := repo.UpdateTemplate(client, context.Background(), "test-ns", "my-template", models.GuardrailTemplateUpsertRequest{
 		Description: "Updated description",
@@ -117,7 +117,7 @@ func TestUpdateTemplateNotDashboardManaged(t *testing.T) {
 			}, map[string]string{"config.yaml": validConfigYAML}),
 		},
 	}
-	repo := NewGuardrailsRepository()
+	repo := NewGuardrailsRepository(nil)
 
 	_, err := repo.UpdateTemplate(client, context.Background(), "test-ns", "hand-made", models.GuardrailTemplateUpsertRequest{
 		ConfigYAML: "passthrough: false\n",
@@ -129,7 +129,7 @@ func TestUpdateTemplateNotDashboardManaged(t *testing.T) {
 
 func TestUpdateTemplateNotFound(t *testing.T) {
 	client := &fakeGuardrailsClient{}
-	repo := NewGuardrailsRepository()
+	repo := NewGuardrailsRepository(nil)
 
 	_, err := repo.UpdateTemplate(client, context.Background(), "test-ns", "missing", models.GuardrailTemplateUpsertRequest{
 		ConfigYAML: "passthrough: false\n",

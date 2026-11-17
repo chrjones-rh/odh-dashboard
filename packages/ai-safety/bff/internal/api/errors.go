@@ -54,6 +54,16 @@ func (app *App) serverErrorResponse(w http.ResponseWriter, r *http.Request, err 
 	app.errorResponse(w, r, httpError)
 }
 
+// badGatewayResponse reports an upstream service failure. Unlike the server
+// error response, the message is surfaced to the requester: it describes the
+// upstream service the requester is already authorized to interact with.
+func (app *App) badGatewayResponse(w http.ResponseWriter, r *http.Request, err error) {
+	app.LogError(r, err)
+
+	httpError := &HTTPError{StatusCode: http.StatusBadGateway, Error: ErrorPayload{Code: strconv.Itoa(http.StatusBadGateway), Message: err.Error()}}
+	app.errorResponse(w, r, httpError)
+}
+
 func (app *App) notFoundResponse(w http.ResponseWriter, r *http.Request) {
 
 	httpError := &HTTPError{StatusCode: http.StatusNotFound, Error: ErrorPayload{Code: strconv.Itoa(http.StatusNotFound), Message: "the requested resource could not be found"}}

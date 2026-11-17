@@ -34,10 +34,15 @@ const (
 	tagsAnnotation        = "guardrail-tags"
 )
 
-type GuardrailsRepository struct{}
+// GuardrailsRepository implements the guardrails endpoints. The optional
+// local overrides redirect guardrail service connections for local
+// development (see GuardrailsLocalConfig).
+type GuardrailsRepository struct {
+	local *GuardrailsLocalConfig
+}
 
-func NewGuardrailsRepository() *GuardrailsRepository {
-	return &GuardrailsRepository{}
+func NewGuardrailsRepository(local *GuardrailsLocalConfig) *GuardrailsRepository {
+	return &GuardrailsRepository{local: local}
 }
 
 // GetTemplates lists the guardrail configuration templates: the platform
@@ -76,6 +81,12 @@ func (r *GuardrailsRepository) GetTemplates(
 		templates = append(templates, template)
 	}
 	for i := range userConfigMaps {
+		// Per-deployment template copies carry the guardrails config label
+		// (the running guardrail needs it) but are runtime configuration,
+		// not catalog templates — exclude them.
+		if isDeploymentConfig(&userConfigMaps[i]) {
+			continue
+		}
 		template := newTemplateModel(&userConfigMaps[i])
 		template.Source = "user"
 		templates = append(templates, template)
@@ -112,10 +123,6 @@ func (r *GuardrailsRepository) GetTemplate(client k8s.KubernetesClientInterface,
 	return detail, nil
 }
 
-// dashboardManagedLabel marks ConfigMaps created by the dashboard (for example
-// the guardrail template copies), used to decide cleanup ownership on delete.
-const dashboardManagedLabel = "opendatahub.io/dashboard"
-
 // DeleteDeployment deletes a NemoGuardrails deployment and the ConfigMap
 // copies the dashboard created for it. ConfigMaps that are not
 // dashboard-managed (for example user-created templates referenced by a
@@ -149,7 +156,7 @@ func (r *GuardrailsRepository) DeleteDeployment(
 		if err != nil {
 			continue
 		}
-		if configMap.Labels[dashboardManagedLabel] != "true" {
+		if configMap.Labels[constants.DashboardManagedLabel] != "true" {
 			continue
 		}
 		if err := client.DeleteConfigMap(ctx, namespace, configMapName); err != nil && !apierrors.IsNotFound(err) {
@@ -318,8 +325,8 @@ func (r *GuardrailsRepository) CreateTemplate(
 		ObjectMeta: metav1.ObjectMeta{
 			Name: request.Name,
 			Labels: map[string]string{
-				"nemo-guardrails-config":   "true",
-				"opendatahub.io/dashboard": "true",
+				"nemo-guardrails-config":        "true",
+				constants.DashboardManagedLabel: "true",
 			},
 			Annotations: templateAnnotations(request.Description),
 		},
@@ -360,7 +367,7 @@ func (r *GuardrailsRepository) UpdateTemplate(
 		}
 		return nil, fmt.Errorf("error fetching guardrail template %s: %w", name, err)
 	}
-	if configMap.Labels[dashboardManagedLabel] != "true" {
+	if configMap.Labels[constants.DashboardManagedLabel] != "true" {
 		return nil, &NotDashboardManagedError{Name: name}
 	}
 
@@ -428,8 +435,14 @@ func (r *GuardrailsRepository) CreateDeploymentFromTemplate(
 		ObjectMeta: metav1.ObjectMeta{
 			Name: configMapName,
 			Labels: map[string]string{
-				"nemo-guardrails-config":   "true",
-				"opendatahub.io/dashboard": "true",
+				"nemo-guardrails-config":        "true",
+				constants.DashboardManagedLabel: "true",
+				constants.DeploymentConfigLabel: "true",
+			},
+			Annotations: map[string]string{
+				// Record where the copy came from so the deployment can show
+				// its template origin.
+				constants.TemplateSourceAnnotation: fmt.Sprintf("%s/%s", templateNamespace, request.TemplateName),
 			},
 		},
 		Data: template.Data,
@@ -487,7 +500,7 @@ func (r *GuardrailsRepository) CreateDeploymentFromTemplate(
 			"metadata": map[string]interface{}{
 				"name": request.Name,
 				"labels": map[string]interface{}{
-					"opendatahub.io/dashboard": "true",
+					constants.DashboardManagedLabel: "true",
 				},
 				"annotations": map[string]interface{}{
 					"security.opendatahub.io/enable-auth": "true",
@@ -610,6 +623,10 @@ func (r *GuardrailsRepository) resolveConfigSources(client k8s.KubernetesClientI
 			source.Found = true
 			source.Keys = sortedKeys(configMap.Data)
 			source.IsOperatorTemplate = configMap.Labels[operatorTemplatePartOfLabel] == operatorTemplatePartOfValue
+			source.IsDashboardManaged = configMap.Labels[constants.DashboardManagedLabel] == "true"
+			source.TemplateNamespace, source.TemplateName = parseTemplateSource(
+				configMap.Annotations[constants.TemplateSourceAnnotation],
+			)
 			if configYAML, ok := configMap.Data[constants.GuardrailsConfigYAMLKey]; ok {
 				summary := parseConfigSummary(configYAML)
 				source.HasModelSpec = summary.ModelCount > 0
@@ -619,6 +636,32 @@ func (r *GuardrailsRepository) resolveConfigSources(client k8s.KubernetesClientI
 		sources[name] = source
 	}
 	return sources
+}
+
+// isDeploymentConfig reports whether a ConfigMap is the per-deployment copy
+// the dashboard creates when deploying a template, rather than a catalog
+// template. New copies carry the deployment-config label; copies made before
+// the label existed are recognized by their recorded template source.
+func isDeploymentConfig(configMap *corev1.ConfigMap) bool {
+	if configMap.Labels[constants.DeploymentConfigLabel] == "true" {
+		return true
+	}
+	return strings.TrimSpace(configMap.Annotations[constants.TemplateSourceAnnotation]) != ""
+}
+
+// parseTemplateSource splits a template-source annotation value
+// ("<namespace>/<name>") into its parts. Malformed values yield empty
+// strings.
+func parseTemplateSource(value string) (namespace, name string) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return "", ""
+	}
+	namespace, name, found := strings.Cut(trimmed, "/")
+	if !found || namespace == "" || name == "" {
+		return "", ""
+	}
+	return namespace, name
 }
 
 // mainModelNameFromConfig extracts the model name of the first type "main"
@@ -659,8 +702,55 @@ func newTemplateModel(configMap *corev1.ConfigMap) models.GuardrailTemplate {
 	}
 	if configYAML, ok := configMap.Data[constants.GuardrailsConfigYAMLKey]; ok {
 		template.Summary = parseConfigSummary(configYAML)
+		// The operator annotates platform templates with the guard actions
+		// and enforcement locations; user-created templates carry no such
+		// annotations, so derive them from the config's rail flows as a
+		// fallback.
+		actions, locations := deriveGuardrailActionsAndLocations(template.Summary)
+		if len(template.Actions) == 0 {
+			template.Actions = actions
+		}
+		if len(template.Locations) == 0 {
+			template.Locations = locations
+		}
 	}
 	return template
+}
+
+// deriveGuardrailActionsAndLocations infers the guard actions (block, mask)
+// and enforcement locations (input, output) from a config's rail flows: a
+// flow whose name mentions masking or redaction masks its input; any other
+// rail blocks. Flow-less configs (pure passthrough) yield neither.
+func deriveGuardrailActionsAndLocations(summary models.GuardrailConfigSummary) (actions, locations []string) {
+	hasMask, hasBlock := false, false
+	seenInput, seenOutput := false, false
+	for _, railFlow := range summary.RailFlows {
+		switch strings.ToLower(strings.TrimSpace(railFlow.Category)) {
+		case "input":
+			seenInput = true
+		case "output":
+			seenOutput = true
+		}
+		name := strings.ToLower(railFlow.Flow)
+		if strings.Contains(name, "mask") || strings.Contains(name, "redact") || strings.Contains(name, "anonymize") {
+			hasMask = true
+		} else {
+			hasBlock = true
+		}
+	}
+	if hasBlock {
+		actions = append(actions, "block")
+	}
+	if hasMask {
+		actions = append(actions, "mask")
+	}
+	if seenInput {
+		locations = append(locations, "input")
+	}
+	if seenOutput {
+		locations = append(locations, "output")
+	}
+	return actions, locations
 }
 
 // parseAnnotationList parses a JSON string array annotation (for example
@@ -705,6 +795,9 @@ func newDeploymentModel(item *unstructured.Unstructured, configSources map[strin
 		// server accepts requests without a model field through it.
 		if source.MainModel != "" {
 			deployment.ModelWired = true
+			if deployment.MainModel == "" {
+				deployment.MainModel = source.MainModel
+			}
 		}
 	}
 

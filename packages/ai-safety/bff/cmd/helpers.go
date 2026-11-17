@@ -43,22 +43,44 @@ func parseLevel(s string) slog.Level {
 	return level
 }
 
-func newOriginParser(allowList *[]string, defaultVal string) func(s string) error {
+func newOriginParser(allowList *[]string) func(s string) error {
 	return func(s string) error {
-		value := defaultVal
-
-		if s != "" {
-			value = s
-		}
-
-		if value == "" {
-			return nil
-		}
-
+		parsed := []string{}
 		for _, str := range strings.Split(s, ",") {
-			*allowList = append(*allowList, strings.TrimSpace(str))
+			if trimmed := strings.TrimSpace(str); trimmed != "" {
+				parsed = append(parsed, trimmed)
+			}
 		}
+		*allowList = parsed
+		return nil
+	}
+}
 
+// newDialMapParser parses comma-separated host=address pairs (for example
+// "my-guardrail.my-project.svc.cluster.local=127.0.0.1:9443") into a map used
+// to redirect guardrail service connections to local port-forwards. Each
+// invocation replaces any previously parsed value.
+func newDialMapParser(dialMap *map[string]string) func(s string) error {
+	return func(s string) error {
+		parsed := map[string]string{}
+		for _, entry := range strings.Split(s, ",") {
+			entry = strings.TrimSpace(entry)
+			if entry == "" {
+				continue
+			}
+			host, address, found := strings.Cut(entry, "=")
+			host = strings.TrimSpace(host)
+			address = strings.TrimSpace(address)
+			if !found || host == "" || address == "" {
+				return fmt.Errorf("invalid dial map entry %q, expected host=address", entry)
+			}
+			parsed[host] = address
+		}
+		if len(parsed) == 0 {
+			*dialMap = nil
+		} else {
+			*dialMap = parsed
+		}
 		return nil
 	}
 }

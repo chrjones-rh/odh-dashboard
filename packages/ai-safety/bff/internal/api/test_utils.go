@@ -38,7 +38,7 @@ func setupApiTest[T any](method, url string, body interface{}, k8Factory kuberne
 		req.Header.Set(constants.KubeflowUserIDHeader, identity.UserID)
 	}
 
-	app := &App{config: config.EnvConfig{AllowedOrigins: []string{"*"}, AuthMethod: config.AuthMethodInternal}, kubernetesClientFactory: k8Factory, repositories: repositories.NewRepositories()}
+	app := &App{config: config.EnvConfig{AllowedOrigins: []string{"*"}, AuthMethod: config.AuthMethodInternal}, kubernetesClientFactory: k8Factory, repositories: repositories.NewRepositories(nil)}
 
 	ctx := context.WithValue(req.Context(), constants.RequestIdentityKey, identity)
 	req = req.WithContext(ctx)

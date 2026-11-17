@@ -17,6 +17,22 @@ const (
 	// trustyai-service-operator, used to distinguish operator templates from user copies.
 	GuardrailsOperatorTemplateLabel = "platform.opendatahub.io/part-of=trustyai-module-operator"
 
+	// DashboardManagedLabel marks ConfigMaps created by the dashboard (for
+	// example the per-deployment template copies); the delete flow only
+	// removes ConfigMaps carrying it.
+	DashboardManagedLabel = "opendatahub.io/dashboard"
+
+	// DeploymentConfigLabel marks the per-deployment ConfigMap copies the
+	// dashboard creates when deploying a template. They carry the guardrails
+	// config label (the running guardrail needs it) but are runtime
+	// configuration, not catalog templates, and are excluded from template
+	// listings.
+	DeploymentConfigLabel = "opendatahub.io/deployment-config"
+
+	// TemplateSourceAnnotation records the template a dashboard-created
+	// ConfigMap was copied from, as "<namespace>/<name>".
+	TemplateSourceAnnotation = "opendatahub.io/template-source"
+
 	// DefaultGuardrailsTemplateNamespace is the default platform namespace holding the
 	// guardrail template ConfigMaps.
 	DefaultGuardrailsTemplateNamespace = "redhat-ods-applications"

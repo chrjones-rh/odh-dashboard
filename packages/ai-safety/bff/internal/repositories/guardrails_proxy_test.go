@@ -2,9 +2,11 @@ package repositories
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/opendatahub-io/ai-safety/bff/internal/models"
@@ -198,6 +200,127 @@ func newGuardrailTestServer(t *testing.T, checkStatus int, checkBody string, cha
 	return server
 }
 
+func TestGuardrailTransportDialMapWildcard(t *testing.T) {
+	// A wildcard pattern redirects every matching hostname, so a single
+	// port-forward can serve whichever guardrail is being tested.
+	var requestHost string
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestHost = r.Host
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "/chat/completions") {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"Paris"}}]}`))
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"status":"passed","content":"hello"}`))
+	}))
+	defer server.Close()
+
+	transport := guardrailTransport(
+		&tls.Config{InsecureSkipVerify: true}, //nolint:gosec // test-only
+		map[string]string{"*.svc.cluster.local": server.Listener.Addr().String()},
+	)
+	httpClient := &http.Client{Transport: transport}
+
+	const serviceHost = "any-guardrail.test-ns.svc.cluster.local"
+	result, err := runGuardrailTest(
+		context.Background(), httpClient,
+		"https://"+serviceHost, "test-token", "my-model", "hello",
+	)
+	require.NoError(t, err)
+	assert.Equal(t, "passed", result.Status)
+	assert.Equal(t, serviceHost, requestHost, "request URL host is preserved")
+}
+
+func TestGuardrailTransportDialMap(t *testing.T) {
+	// A local-development dial map redirects connections for a service
+	// hostname to an alternate address (an `oc port-forward` listener) while
+	// the request URL keeps the service hostname.
+	var requestHost string
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestHost = r.Host
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "/chat/completions") {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"Paris"}}]}`))
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"status":"passed","content":"hello"}`))
+	}))
+	defer server.Close()
+
+	const serviceHost = "my-guardrail.test-ns.svc.cluster.local"
+	transport := guardrailTransport(
+		// The httptest certificate is not issued for the service hostname;
+		// this test exercises the dial redirection, not TLS validation.
+		&tls.Config{InsecureSkipVerify: true}, //nolint:gosec // test-only, see above
+		map[string]string{serviceHost: server.Listener.Addr().String()},
+	)
+	httpClient := &http.Client{Transport: transport}
+
+	result, err := runGuardrailTest(
+		context.Background(), httpClient,
+		"https://"+serviceHost, "test-token", "my-model", "hello",
+	)
+	require.NoError(t, err)
+	assert.Equal(t, "passed", result.Status)
+	assert.Equal(t, "Paris", result.ModelResponse)
+	assert.Equal(t, serviceHost, requestHost, "request URL host is preserved")
+}
+
+func TestFetchGuardrailModelName(t *testing.T) {
+	tests := []struct {
+		name          string
+		handler       http.HandlerFunc
+		expectedModel string
+	}{
+		{
+			name: "returns the first reported model id",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				require.Equal(t, "/v1/models", r.URL.Path)
+				require.Equal(t, "Bearer test-token", r.Header.Get("Authorization"))
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"data":[{"id":"Qwen/Qwen3-VL-30B-A3B-Instruct"},{"id":"publishers/llm/models/Qwen/Qwen3-VL-30B-A3B-Instruct"}]}`))
+			},
+			expectedModel: "Qwen/Qwen3-VL-30B-A3B-Instruct",
+		},
+		{
+			name: "empty data yields empty string",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"data":[]}`))
+			},
+			expectedModel: "",
+		},
+		{
+			name: "unsupported endpoint yields empty string",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusNotFound)
+			},
+			expectedModel: "",
+		},
+		{
+			name: "invalid JSON yields empty string",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				_, _ = w.Write([]byte(`not-json`))
+			},
+			expectedModel: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(tt.handler)
+			defer server.Close()
+
+			model := fetchGuardrailModelName(context.Background(), server.Client(), server.URL, "test-token")
+			assert.Equal(t, tt.expectedModel, model)
+		})
+	}
+}
+
 func TestRunGuardrailTestBlocked(t *testing.T) {
 	server := newGuardrailTestServer(t, http.StatusOK,
 		`{"status":"blocked","content":"I'm sorry, I can't respond to that.","rail":"hf classifier"}`,
@@ -263,4 +386,46 @@ func TestMainModelNameFromConfig(t *testing.T) {
 	assert.Equal(t, "", mainModelNameFromConfig("models:\n  - type: moderation\n    model: other\n"))
 	assert.Equal(t, "", mainModelNameFromConfig("passthrough: true\n"))
 	assert.Equal(t, "", mainModelNameFromConfig("\tinvalid: ["))
+}
+
+func TestRouteEndpoint(t *testing.T) {
+	repo := NewGuardrailsRepository(&GuardrailsLocalConfig{
+		RouteSuffix: "apps.example.com",
+	})
+
+	tests := []struct {
+		name     string
+		endpoint string
+		expected string
+	}{
+		{
+			name:     "service URL with cluster.local suffix",
+			endpoint: "https://my-guardrail.test-ns.svc.cluster.local",
+			expected: "https://my-guardrail-test-ns.apps.example.com",
+		},
+		{
+			name:     "service URL with svc suffix and port",
+			endpoint: "https://my-guardrail.test-ns.svc:8443",
+			expected: "https://my-guardrail-test-ns.apps.example.com",
+		},
+		{
+			name:     "non-service host is left untouched",
+			endpoint: "https://example.com/v1",
+			expected: "https://example.com/v1",
+		},
+		{
+			name:     "host without namespace is left untouched",
+			endpoint: "https://svc-only.svc.cluster.local",
+			expected: "https://svc-only.svc.cluster.local",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, repo.routeEndpoint(tt.endpoint))
+		})
+	}
+
+	// Without a suffix nothing is rewritten.
+	plain := NewGuardrailsRepository(nil)
+	assert.Equal(t, "https://my-guardrail.test-ns.svc.cluster.local", plain.routeEndpoint("https://my-guardrail.test-ns.svc.cluster.local"))
 }

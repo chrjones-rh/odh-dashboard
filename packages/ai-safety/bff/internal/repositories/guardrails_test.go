@@ -22,14 +22,14 @@ import (
 type fakeGuardrailsClient struct {
 	kubernetes.KubernetesClientInterface
 
-	configMaps            []corev1.ConfigMap
-	nemoGuardrails        []unstructured.Unstructured
-	inferenceServices     []unstructured.Unstructured
-	llmInferenceServices  []unstructured.Unstructured
-	forbidInferenceList   bool
+	configMaps             []corev1.ConfigMap
+	nemoGuardrails         []unstructured.Unstructured
+	inferenceServices      []unstructured.Unstructured
+	llmInferenceServices   []unstructured.Unstructured
+	forbidInferenceList    bool
 	forbidLLMInferenceList bool
-	allowList             bool
-	allowCreate           bool
+	allowList              bool
+	allowCreate            bool
 
 	createdConfigMaps     []corev1.ConfigMap
 	createdNemoGuardrails []unstructured.Unstructured
@@ -270,7 +270,7 @@ func TestGetTemplates(t *testing.T) {
 		},
 	}
 
-	repo := NewGuardrailsRepository()
+	repo := NewGuardrailsRepository(nil)
 	templates, err := repo.GetTemplates(client, nil, context.Background(), "redhat-ods-applications", "")
 	require.NoError(t, err)
 	require.Len(t, templates, 2)
@@ -280,7 +280,10 @@ func TestGetTemplates(t *testing.T) {
 	assert.Equal(t, []string{"config.yaml"}, templates[0].Keys)
 	assert.Equal(t, 1, templates[0].Summary.ModelCount)
 	assert.Empty(t, templates[0].Description)
-	assert.Nil(t, templates[0].Actions)
+	// No actions annotation: derived from the config's rail flows (self
+	// check flows block, the mask flow masks) on input and output.
+	assert.Equal(t, []string{"block", "mask"}, templates[0].Actions)
+	assert.Equal(t, []string{"input", "output"}, templates[0].Locations)
 
 	safety := templates[1]
 	assert.Equal(t, "trustyai-service-operator-nemo-guardrails-default-safety", safety.Name)
@@ -310,7 +313,7 @@ func TestGetTemplateDetail(t *testing.T) {
 		},
 	}
 
-	repo := NewGuardrailsRepository()
+	repo := NewGuardrailsRepository(nil)
 	detail, err := repo.GetTemplate(client, context.Background(), "redhat-ods-applications", "my-template")
 	require.NoError(t, err)
 	assert.Equal(t, "my-template", detail.Name)
@@ -323,7 +326,7 @@ func TestGetTemplateDetail(t *testing.T) {
 }
 
 func TestGetTemplateDetailNotFound(t *testing.T) {
-	repo := NewGuardrailsRepository()
+	repo := NewGuardrailsRepository(nil)
 	_, err := repo.GetTemplate(&fakeGuardrailsClient{}, context.Background(), "redhat-ods-applications", "missing")
 	assert.True(t, apierrors.IsNotFound(err))
 }
@@ -375,7 +378,7 @@ func TestGetDeployments(t *testing.T) {
 		},
 	}
 
-	repo := NewGuardrailsRepository()
+	repo := NewGuardrailsRepository(nil)
 	deployments, err := repo.GetDeployments(client, context.Background(), "test-ns")
 	require.NoError(t, err)
 	require.Len(t, deployments, 1)
@@ -405,7 +408,7 @@ func TestGetDeploymentsMissingConfigMap(t *testing.T) {
 		nemoGuardrails: []unstructured.Unstructured{deploymentCR()},
 	}
 
-	repo := NewGuardrailsRepository()
+	repo := NewGuardrailsRepository(nil)
 	deployments, err := repo.GetDeployments(client, context.Background(), "test-ns")
 	require.NoError(t, err)
 	require.Len(t, deployments, 1)
@@ -430,7 +433,7 @@ func TestGetDeploymentsNotReady(t *testing.T) {
 
 	client := &fakeGuardrailsClient{nemoGuardrails: []unstructured.Unstructured{cr}}
 
-	repo := NewGuardrailsRepository()
+	repo := NewGuardrailsRepository(nil)
 	deployments, err := repo.GetDeployments(client, context.Background(), "test-ns")
 	require.NoError(t, err)
 	require.Len(t, deployments, 1)
@@ -451,7 +454,7 @@ func TestGetDeploymentDetail(t *testing.T) {
 		},
 	}
 
-	repo := NewGuardrailsRepository()
+	repo := NewGuardrailsRepository(nil)
 	detail, err := repo.GetDeployment(client, context.Background(), "test-ns", "my-guardrails")
 	require.NoError(t, err)
 	assert.Equal(t, "my-guardrails", detail.Name)
@@ -471,7 +474,7 @@ func TestGetDeploymentDetail(t *testing.T) {
 }
 
 func TestGetDeploymentDetailNotFound(t *testing.T) {
-	repo := NewGuardrailsRepository()
+	repo := NewGuardrailsRepository(nil)
 	_, err := repo.GetDeployment(&fakeGuardrailsClient{}, context.Background(), "test-ns", "missing")
 	assert.True(t, apierrors.IsNotFound(err))
 }
@@ -498,7 +501,7 @@ func TestCreateDeploymentFromTemplate(t *testing.T) {
 	client := &fakeGuardrailsClient{}
 	internalClient := &fakeGuardrailsClient{configMaps: []corev1.ConfigMap{template}}
 
-	repo := NewGuardrailsRepository()
+	repo := NewGuardrailsRepository(nil)
 	deployment, err := repo.CreateDeploymentFromTemplate(
 		client, internalClient, context.Background(), "redhat-ods-applications",
 		models.GuardrailDeploymentCreateRequest{
@@ -519,6 +522,13 @@ func TestCreateDeploymentFromTemplate(t *testing.T) {
 	assert.Equal(t, template.Data, copyCM.Data)
 	assert.Equal(t, "true", copyCM.Labels["nemo-guardrails-config"])
 	assert.Equal(t, "true", copyCM.Labels["opendatahub.io/dashboard"])
+	// The copy records the template it was made from, so deployments can
+	// show their template origin.
+	assert.Equal(
+		t,
+		"redhat-ods-applications/trustyai-service-operator-nemo-guardrails-default-pii",
+		copyCM.Annotations["opendatahub.io/template-source"],
+	)
 
 	// The NemoGuardrails CR references the copy.
 	require.Len(t, client.createdNemoGuardrails, 1)
@@ -547,7 +557,7 @@ func TestCreateDeploymentFromTemplate(t *testing.T) {
 }
 
 func TestCreateDeploymentFromTemplateInvalidName(t *testing.T) {
-	repo := NewGuardrailsRepository()
+	repo := NewGuardrailsRepository(nil)
 	_, err := repo.CreateDeploymentFromTemplate(
 		&fakeGuardrailsClient{}, &fakeGuardrailsClient{}, context.Background(), "redhat-ods-applications",
 		models.GuardrailDeploymentCreateRequest{Name: "Invalid Name", Namespace: "test-ns", TemplateName: "tpl"})
@@ -556,7 +566,7 @@ func TestCreateDeploymentFromTemplateInvalidName(t *testing.T) {
 }
 
 func TestCreateDeploymentFromTemplateMissingTemplate(t *testing.T) {
-	repo := NewGuardrailsRepository()
+	repo := NewGuardrailsRepository(nil)
 	_, err := repo.CreateDeploymentFromTemplate(
 		&fakeGuardrailsClient{}, &fakeGuardrailsClient{}, context.Background(), "redhat-ods-applications",
 		models.GuardrailDeploymentCreateRequest{Name: "my-guardrail", Namespace: "test-ns", TemplateName: "missing"})
@@ -572,7 +582,7 @@ func TestCreateDeploymentFromTemplateAlreadyExists(t *testing.T) {
 	client := &fakeGuardrailsClient{nemoGuardrails: []unstructured.Unstructured{existingCR}}
 	internalClient := &fakeGuardrailsClient{configMaps: []corev1.ConfigMap{template}}
 
-	repo := NewGuardrailsRepository()
+	repo := NewGuardrailsRepository(nil)
 	_, err := repo.CreateDeploymentFromTemplate(
 		client, internalClient, context.Background(), "redhat-ods-applications",
 		models.GuardrailDeploymentCreateRequest{Name: "my-guardrails", Namespace: "test-ns", TemplateName: "tpl"})
@@ -591,7 +601,7 @@ func TestCreateDeploymentFromTemplateConfigMapConflict(t *testing.T) {
 	client := &fakeGuardrailsClient{configMaps: []corev1.ConfigMap{existingCopy}}
 	internalClient := &fakeGuardrailsClient{configMaps: []corev1.ConfigMap{template}}
 
-	repo := NewGuardrailsRepository()
+	repo := NewGuardrailsRepository(nil)
 	_, err := repo.CreateDeploymentFromTemplate(
 		client, internalClient, context.Background(), "redhat-ods-applications",
 		models.GuardrailDeploymentCreateRequest{Name: "my-guardrail", Namespace: "test-ns", TemplateName: "tpl"})
@@ -615,7 +625,7 @@ func TestGetTemplatesMergesUserNamespace(t *testing.T) {
 	internalClient := &fakeGuardrailsClient{configMaps: []corev1.ConfigMap{platformTemplate}}
 	userClient := &fakeGuardrailsClient{configMaps: []corev1.ConfigMap{userTemplate}}
 
-	repo := NewGuardrailsRepository()
+	repo := NewGuardrailsRepository(nil)
 	templates, err := repo.GetTemplates(
 		internalClient, userClient, context.Background(), "redhat-ods-applications", "test-ns")
 	require.NoError(t, err)
@@ -629,6 +639,48 @@ func TestGetTemplatesMergesUserNamespace(t *testing.T) {
 	assert.Equal(t, "platform", templates[1].Source)
 }
 
+func TestGetTemplatesExcludesDeploymentCopies(t *testing.T) {
+	platformTemplate := testConfigMap("redhat-ods-applications", "trustyai-service-operator-nemo-guardrails-default-pii",
+		map[string]string{"nemo-guardrails-config": "true"},
+		map[string]string{"config.yaml": passthroughConfigYAML})
+	userTemplate := testConfigMap("test-ns", "my-custom-guardrail",
+		map[string]string{"nemo-guardrails-config": "true"},
+		map[string]string{"config.yaml": customConfigYAML})
+	// The per-deployment copy a template deployment creates: labeled like a
+	// template (the running guardrail needs it) but marked as runtime config.
+	deploymentCopy := testConfigMap("test-ns", "guardrail-my-deployment",
+		map[string]string{"nemo-guardrails-config": "true"},
+		map[string]string{"config.yaml": passthroughConfigYAML})
+	deploymentCopy.Labels["opendatahub.io/deployment-config"] = "true"
+	deploymentCopy.Annotations = map[string]string{
+		"opendatahub.io/template-source": "redhat-ods-applications/trustyai-service-operator-nemo-guardrails-default-pii",
+	}
+	// A copy created before the deployment-config label existed is still
+	// recognized by its recorded template source.
+	legacyCopy := testConfigMap("test-ns", "guardrail-legacy-deployment",
+		map[string]string{"nemo-guardrails-config": "true"},
+		map[string]string{"config.yaml": passthroughConfigYAML})
+	legacyCopy.Annotations = map[string]string{
+		"opendatahub.io/template-source": "redhat-ods-applications/trustyai-service-operator-nemo-guardrails-default-pii",
+	}
+
+	internalClient := &fakeGuardrailsClient{configMaps: []corev1.ConfigMap{platformTemplate}}
+	userClient := &fakeGuardrailsClient{configMaps: []corev1.ConfigMap{
+		userTemplate, deploymentCopy, legacyCopy,
+	}}
+
+	repo := NewGuardrailsRepository(nil)
+	templates, err := repo.GetTemplates(
+		internalClient, userClient, context.Background(), "redhat-ods-applications", "test-ns")
+	require.NoError(t, err)
+	require.Len(t, templates, 2)
+
+	assert.Equal(t, "my-custom-guardrail", templates[0].Name)
+	assert.Equal(t, "user", templates[0].Source)
+	assert.Equal(t, "trustyai-service-operator-nemo-guardrails-default-pii", templates[1].Name)
+	assert.Equal(t, "platform", templates[1].Source)
+}
+
 func TestGetTemplatesUserNamespaceForbidden(t *testing.T) {
 	platformTemplate := testConfigMap("redhat-ods-applications", "tpl",
 		map[string]string{"nemo-guardrails-config": "true"},
@@ -637,7 +689,7 @@ func TestGetTemplatesUserNamespaceForbidden(t *testing.T) {
 	internalClient := &fakeGuardrailsClient{configMaps: []corev1.ConfigMap{platformTemplate}}
 	forbiddenClient := &forbiddenConfigMapsClient{}
 
-	repo := NewGuardrailsRepository()
+	repo := NewGuardrailsRepository(nil)
 	templates, err := repo.GetTemplates(
 		internalClient, forbiddenClient, context.Background(), "redhat-ods-applications", "test-ns")
 	require.NoError(t, err)
@@ -664,7 +716,7 @@ func TestCreateDeploymentFromUserTemplate(t *testing.T) {
 	client := &fakeGuardrailsClient{configMaps: []corev1.ConfigMap{userTemplate}}
 	internalClient := &fakeGuardrailsClient{}
 
-	repo := NewGuardrailsRepository()
+	repo := NewGuardrailsRepository(nil)
 	deployment, err := repo.CreateDeploymentFromTemplate(
 		client, internalClient, context.Background(), "redhat-ods-applications",
 		models.GuardrailDeploymentCreateRequest{
@@ -717,7 +769,7 @@ func TestDeleteDeployment(t *testing.T) {
 		configMaps:     []corev1.ConfigMap{dashboardCopy},
 	}
 
-	repo := NewGuardrailsRepository()
+	repo := NewGuardrailsRepository(nil)
 	err := repo.DeleteDeployment(client, context.Background(), "test-ns", "my-guardrails")
 	require.NoError(t, err)
 
@@ -738,7 +790,7 @@ func TestDeleteDeploymentKeepsUserManagedConfigMaps(t *testing.T) {
 		configMaps:     []corev1.ConfigMap{userConfigMap},
 	}
 
-	repo := NewGuardrailsRepository()
+	repo := NewGuardrailsRepository(nil)
 	err := repo.DeleteDeployment(client, context.Background(), "test-ns", "my-guardrails")
 	require.NoError(t, err)
 
@@ -749,7 +801,82 @@ func TestDeleteDeploymentKeepsUserManagedConfigMaps(t *testing.T) {
 }
 
 func TestDeleteDeploymentNotFound(t *testing.T) {
-	repo := NewGuardrailsRepository()
+	repo := NewGuardrailsRepository(nil)
 	err := repo.DeleteDeployment(&fakeGuardrailsClient{}, context.Background(), "test-ns", "missing")
 	assert.True(t, apierrors.IsNotFound(err))
+}
+
+func TestDeriveGuardrailActionsAndLocations(t *testing.T) {
+	tests := []struct {
+		name              string
+		summary           models.GuardrailConfigSummary
+		expectedActions   []string
+		expectedLocations []string
+	}{
+		{
+			name: "input checks block on input",
+			summary: models.GuardrailConfigSummary{RailFlows: []models.GuardrailRailFlow{
+				{Category: "input", Flow: "injection detection"},
+				{Category: "input", Flow: "hf classifier check windowed input $classifier=\"prompt-injection\""},
+			}},
+			expectedActions:   []string{"block"},
+			expectedLocations: []string{"input"},
+		},
+		{
+			name: "masking flows mask, other flows block",
+			summary: models.GuardrailConfigSummary{RailFlows: []models.GuardrailRailFlow{
+				{Category: "input", Flow: "mask sensitive data on input"},
+				{Category: "output", Flow: "self check output"},
+			}},
+			expectedActions:   []string{"block", "mask"},
+			expectedLocations: []string{"input", "output"},
+		},
+		{
+			name: "redaction flows mask",
+			summary: models.GuardrailConfigSummary{RailFlows: []models.GuardrailRailFlow{
+				{Category: "output", Flow: "redact sensitive data on output"},
+			}},
+			expectedActions:   []string{"mask"},
+			expectedLocations: []string{"output"},
+		},
+		{
+			name:              "passthrough configs yield neither",
+			summary:           models.GuardrailConfigSummary{Passthrough: true},
+			expectedActions:   nil,
+			expectedLocations: nil,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			actions, locations := deriveGuardrailActionsAndLocations(tt.summary)
+			assert.Equal(t, tt.expectedActions, actions)
+			assert.Equal(t, tt.expectedLocations, locations)
+		})
+	}
+}
+
+func TestNewTemplateModelDerivesActionsAndLocationsWithoutAnnotations(t *testing.T) {
+	// A user-created template carries only the description annotation; the
+	// guard actions and locations come from its config.yaml.
+	configMap := testConfigMap("test-ns", "my-guardrail",
+		map[string]string{"nemo-guardrails-config": "true"},
+		map[string]string{"config.yaml": "passthrough: true\nrails:\n  input:\n    flows:\n      - injection detection\n"})
+	configMap.Annotations = map[string]string{"guardrail-description": "My guardrail"}
+
+	template := newTemplateModel(&configMap)
+	assert.Equal(t, "My guardrail", template.Description)
+	assert.Equal(t, []string{"block"}, template.Actions)
+	assert.Equal(t, []string{"input"}, template.Locations)
+
+	// Annotations, when present, win over the derived values.
+	annotated := testConfigMapWithAnnotations("test-ns", "annotated-guardrail",
+		map[string]string{"nemo-guardrails-config": "true"},
+		map[string]string{"config.yaml": "passthrough: true\nrails:\n  input:\n    flows:\n      - injection detection\n"},
+		map[string]string{
+			"guardrail-actions":   `["mask"]`,
+			"guardrail-locations": `["input", "output"]`,
+		})
+	derived := newTemplateModel(&annotated)
+	assert.Equal(t, []string{"mask"}, derived.Actions)
+	assert.Equal(t, []string{"input", "output"}, derived.Locations)
 }

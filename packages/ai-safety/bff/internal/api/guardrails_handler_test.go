@@ -266,7 +266,7 @@ func setupGuardrailsRequestWithBody(
 		},
 		logger:                  slog.New(slog.NewTextHandler(io.Discard, nil)),
 		kubernetesClientFactory: &guardrailsFakeFactory{client: client},
-		repositories:            repositories.NewRepositories(),
+		repositories:            repositories.NewRepositories(nil),
 	}
 
 	var reqBody io.Reader
@@ -340,6 +340,32 @@ func TestGetGuardrailDeploymentsHandler(t *testing.T) {
 	assert.Equal(t, "my-guardrails", deployment["name"])
 	assert.Equal(t, "Ready", deployment["phase"])
 	assert.Equal(t, true, deployment["ready"])
+}
+
+func TestGetGuardrailDeploymentsHandlerMainModel(t *testing.T) {
+	// A config-side main model entry surfaces as the deployment's mainModel.
+	client := &guardrailsFakeClient{
+		configMaps: []corev1.ConfigMap{
+			{
+				ObjectMeta: metav1.ObjectMeta{Namespace: "test-ns", Name: "guardrail-placeholder"},
+				Data: map[string]string{
+					"config.yaml": "models:\n  - type: main\n    engine: openai\n    model: my-model\n",
+				},
+			},
+		},
+		nemoGuardrails: []unstructured.Unstructured{guardrailsTestDeploymentCR()},
+		allowList:      true,
+	}
+
+	recorder, body := performGuardrailsRequest(t, client, http.MethodGet, "/api/v1/guardrails/deployments?namespace=test-ns", nil)
+	require.Equal(t, http.StatusOK, recorder.Code)
+	data, ok := body["data"].([]interface{})
+	require.True(t, ok, "expected data array in response")
+	require.Len(t, data, 1)
+
+	deployment := data[0].(map[string]interface{})
+	assert.Equal(t, true, deployment["modelWired"])
+	assert.Equal(t, "my-model", deployment["mainModel"])
 }
 
 func TestGetGuardrailDeploymentsHandlerForbidden(t *testing.T) {
@@ -537,7 +563,7 @@ func TestDeleteGuardrailDeploymentHandler(t *testing.T) {
 		},
 		logger:                  slog.New(slog.NewTextHandler(io.Discard, nil)),
 		kubernetesClientFactory: &guardrailsFakeFactory{client: client},
-		repositories:            repositories.NewRepositories(),
+		repositories:            repositories.NewRepositories(nil),
 	}
 
 	req, err := http.NewRequest(http.MethodDelete, "/api/v1/guardrails/deployments/my-guardrails?namespace=test-ns", http.NoBody)
@@ -571,7 +597,7 @@ func TestDeleteGuardrailDeploymentHandlerForbidden(t *testing.T) {
 		},
 		logger:                  slog.New(slog.NewTextHandler(io.Discard, nil)),
 		kubernetesClientFactory: &guardrailsFakeFactory{client: client},
-		repositories:            repositories.NewRepositories(),
+		repositories:            repositories.NewRepositories(nil),
 	}
 
 	req, err := http.NewRequest(http.MethodDelete, "/api/v1/guardrails/deployments/my-guardrails?namespace=test-ns", http.NoBody)
@@ -613,7 +639,7 @@ func performGuardrailsRequest(
 		},
 		logger:                  slog.New(slog.NewTextHandler(io.Discard, nil)),
 		kubernetesClientFactory: &guardrailsFakeFactory{client: client},
-		repositories:            repositories.NewRepositories(),
+		repositories:            repositories.NewRepositories(nil),
 	}
 
 	var reqBody io.Reader
@@ -841,6 +867,66 @@ func TestTestGuardrailDeploymentHandlerNotWired(t *testing.T) {
 		"message": "hello",
 	})
 	assert.Equal(t, http.StatusBadRequest, recorder.Code)
+}
+
+func TestTestGuardrailDeploymentHandlerModelNameRequired(t *testing.T) {
+	// The deployment is wired only through the MAIN_MODEL_BASE_URL
+	// environment variable, its config carries no main model entry, and the
+	// guardrail endpoint does not resolve (the status endpoint points at an
+	// in-cluster service), so the model name cannot be determined.
+	client := &guardrailsFakeClient{
+		nemoGuardrails: []unstructured.Unstructured{guardrailsTestReadyWiredDeploymentCR()},
+		allowList:      true,
+	}
+
+	recorder, _ := performGuardrailsRequest(t, client, http.MethodPost, "/api/v1/guardrails/deployments/my-guardrails/test?namespace=test-ns", map[string]interface{}{
+		"message": "hello",
+	})
+	assert.Equal(t, http.StatusBadRequest, recorder.Code)
+
+	var body map[string]interface{}
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &body))
+	errObj, ok := body["error"].(map[string]interface{})
+	require.True(t, ok, "expected error envelope")
+	assert.Contains(t, errObj["message"], "model name could not be determined")
+}
+
+func TestTestGuardrailDeploymentHandlerUpstreamError(t *testing.T) {
+	// The deployment's config carries a main model, so the model name
+	// resolves without a network call; the guardrail endpoint then does not
+	// resolve (in-cluster service DNS from a test), surfacing an upstream
+	// error with its message rather than a generic server error.
+	cr := guardrailsTestDeploymentCR()
+	cr.Object["status"] = map[string]interface{}{
+		"phase":    "Ready",
+		"endpoint": "https://my-guardrails.test-ns.svc.cluster.local",
+		"conditions": []interface{}{
+			map[string]interface{}{"type": "DeploymentReady", "status": "True"},
+		},
+	}
+	client := &guardrailsFakeClient{
+		configMaps: []corev1.ConfigMap{
+			{
+				ObjectMeta: metav1.ObjectMeta{Namespace: "test-ns", Name: "guardrail-placeholder"},
+				Data: map[string]string{
+					"config.yaml": "models:\n  - type: main\n    engine: openai\n    model: my-model\n",
+				},
+			},
+		},
+		nemoGuardrails: []unstructured.Unstructured{cr},
+		allowList:      true,
+	}
+
+	recorder, _ := performGuardrailsRequest(t, client, http.MethodPost, "/api/v1/guardrails/deployments/my-guardrails/test?namespace=test-ns", map[string]interface{}{
+		"message": "hello",
+	})
+	assert.Equal(t, http.StatusBadGateway, recorder.Code)
+
+	var body map[string]interface{}
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &body))
+	errObj, ok := body["error"].(map[string]interface{})
+	require.True(t, ok, "expected error envelope")
+	assert.Contains(t, errObj["message"], "guardrail check request failed")
 }
 
 func TestTestGuardrailDeploymentHandlerForbidden(t *testing.T) {

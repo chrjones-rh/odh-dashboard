@@ -61,8 +61,57 @@ make run LOG_LEVEL=DEBUG
 | `-key-file` | `KEY_FILE` | TLS key path |
 | `-insecure-skip-verify` | `INSECURE_SKIP_VERIFY` | Skip upstream TLS verify (dev only) |
 | `-mock-bff-clients` | `MOCK_BFF_CLIENTS` | Use mock BFF clients (no real HTTP calls to other BFFs) |
+| `-guardrails-template-namespace` | `GUARDRAILS_TEMPLATE_NAMESPACE` | Namespace holding the guardrail template ConfigMaps (default `redhat-ods-applications`) |
+| `-guardrails-dial-map` | `GUARDRAILS_DIAL_MAP` | Local dev only: map guardrail service hostnames to alternate dial addresses (see below) |
 
 TLS: If both `cert-file` and `key-file` are provided the server starts with HTTPS.
+
+### Testing guardrail deployments from a local BFF
+
+Guardrail deployment endpoints (`status.endpoint`) are in-cluster service URLs
+(`<name>.<namespace>.svc.cluster.local`), unreachable from a BFF running on a
+laptop — the Kubernetes API is routable, the service network is not. To test a
+deployment locally, port-forward the guardrail service and tell the BFF to dial
+your local listener instead. The request URL is left untouched, so TLS SNI and
+certificate validation against the service serving CA keep working:
+
+```shell
+# Terminal 1: forward local 9443 to the guardrail service (port 443)
+oc port-forward -n <namespace> svc/<deployment-name> 9443:443
+
+# Terminal 2: run the BFF with the dial map
+GUARDRAILS_DIAL_MAP="<deployment-name>.<namespace>.svc.cluster.local=127.0.0.1:9443" make run
+```
+
+A wildcard pattern covers every guardrail in a namespace, so a single
+port-forward suffices — re-point it at whichever deployment you are testing:
+
+```shell
+GUARDRAILS_DIAL_MAP="*.<namespace>.svc.cluster.local=127.0.0.1:9443" make run
+```
+
+Multiple entries are comma-separated; exact hostnames take precedence over
+wildcards. Unset (the default, and in-cluster deployments) the map changes
+nothing.
+
+Alternatively, skip port-forwards entirely by reaching the guardrails through
+their OpenShift routes (every deployment exposes one at
+`<name>-<namespace>.<apps-domain>`, reachable from outside the cluster). Route
+certificates are signed by the ingress operator CA, so extract it once and
+trust it through `BUNDLE_PATHS`:
+
+```shell
+# One time: extract the router CA from the served certificate chain
+openssl s_client -connect <any-route-host>:443 -servername <any-route-host> -showcerts </dev/null 2>/dev/null \
+  | awk '/BEGIN CERTIFICATE/,/END CERTIFICATE/{print}' > ~/guardrails-router-ca.pem
+
+# Every session — no port-forwards, no dial map
+GUARDRAILS_ROUTE_SUFFIX="<apps-domain>" BUNDLE_PATHS=~/guardrails-router-ca.pem make run
+```
+
+Route mode takes precedence over the dial map. Unset (the default, and
+in-cluster deployments) it changes nothing — in-cluster the service URLs are
+used directly with the service serving CA.
 
 ## Running the linter locally
 

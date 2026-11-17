@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -46,6 +47,20 @@ func (e *ModelNotWiredError) Error() string {
 	return fmt.Sprintf("guardrail deployment %s is not wired to a model", e.Name)
 }
 
+// ModelNameRequiredError reports a test attempt against a deployment whose
+// model name could not be determined: it is not in the deployment's
+// configuration, and the guardrail service did not report it either.
+type ModelNameRequiredError struct {
+	Name string
+}
+
+func (e *ModelNameRequiredError) Error() string {
+	return fmt.Sprintf(
+		"guardrail deployment %s is wired to a model but its model name could not be determined; provide the model name in the test request",
+		e.Name,
+	)
+}
+
 // TestDeployment runs a test message through a guardrail deployment: it calls
 // the deployment's /v1/checks endpoint for a structured pass/block verdict
 // and, for messages that pass, /v1/chat/completions for the model's answer.
@@ -76,12 +91,13 @@ func (r *GuardrailsRepository) TestDeployment(
 		return nil, err
 	}
 
-	modelName := strings.TrimSpace(request.Model)
-	if modelName == "" {
-		modelName = r.resolveMainModel(client, ctx, namespace, item)
-	}
-	if modelName == "" {
-		return nil, &ModelNotWiredError{Name: name}
+	// Local development: reach the guardrail through its route instead of the
+	// cluster-internal service URL. Route certificates are signed by the
+	// ingress operator CA, so the service serving CA pool does not apply.
+	tlsConfig := r.guardrailTLSConfig(client, ctx, namespace, name)
+	if r.local != nil && r.local.RouteSuffix != "" {
+		endpoint = r.routeEndpoint(endpoint)
+		tlsConfig = &tls.Config{RootCAs: r.local.RouteCAs}
 	}
 
 	token, err := client.BearerToken()
@@ -89,16 +105,118 @@ func (r *GuardrailsRepository) TestDeployment(
 		return nil, fmt.Errorf("error resolving user token: %w", err)
 	}
 
+	var dialMap map[string]string
+	if r.local != nil {
+		dialMap = r.local.DialMap
+	}
 	httpClient := &http.Client{
-		Timeout: guardrailTestTimeout,
-		Transport: &http.Transport{
-			// Trust the service serving CA that signs the guardrail service
-			// certificate; falls back to the system pool.
-			TLSClientConfig: r.guardrailTLSConfig(client, ctx, namespace, name),
-		},
+		Timeout:   guardrailTestTimeout,
+		Transport: guardrailTransport(tlsConfig, dialMap),
 	}
 
-	return runGuardrailTest(ctx, httpClient, endpoint, token, modelName, strings.TrimSpace(request.Message))
+	// Model name resolution: an explicit request override wins, then the
+	// deployment's configured main model (dashboard-created deployments),
+	// then the guardrail service itself, which reports the model it is wired
+	// to through its OpenAI-compatible /v1/models endpoint.
+	modelName := strings.TrimSpace(request.Model)
+	if modelName == "" {
+		modelName = r.resolveMainModel(client, ctx, namespace, item)
+	}
+	if modelName == "" {
+		modelName = fetchGuardrailModelName(ctx, httpClient, endpoint, token)
+	}
+	if modelName == "" {
+		if hasMainModelBaseURL(item) {
+			return nil, &ModelNameRequiredError{Name: name}
+		}
+		return nil, &ModelNotWiredError{Name: name}
+	}
+
+	result, err := runGuardrailTest(ctx, httpClient, endpoint, token, modelName, strings.TrimSpace(request.Message))
+	if err != nil {
+		// The guardrail service itself failed (connection or error
+		// response). The message is sanitized and describes a service the
+		// requester is authorized to test, so it is safe to surface.
+		return nil, &GuardrailUpstreamError{Detail: err.Error()}
+	}
+	return result, nil
+}
+
+// GuardrailUpstreamError reports a failure of the guardrail service itself
+// during a test: the connection failed or the service answered with an error
+// status. The detail is derived from the runGuardrailTest messages, which are
+// truncated and contain no credentials.
+type GuardrailUpstreamError struct {
+	Detail string
+}
+
+func (e *GuardrailUpstreamError) Error() string {
+	return e.Detail
+}
+
+// routeEndpoint rewrites a validated in-cluster service endpoint to the
+// deployment's OpenShift route ("<service>-<namespace>.<routeSuffix>"), used
+// for local development where service URLs are unreachable but routes are.
+// Only service URLs are rewritten; anything else is left untouched.
+func (r *GuardrailsRepository) routeEndpoint(endpoint string) string {
+	if r.local == nil || r.local.RouteSuffix == "" {
+		return endpoint
+	}
+	parsed, err := url.Parse(endpoint)
+	if err != nil {
+		return endpoint
+	}
+	host := parsed.Hostname()
+	trimmed := strings.TrimSuffix(host, ".svc.cluster.local")
+	if trimmed == host {
+		trimmed = strings.TrimSuffix(host, ".svc")
+	}
+	if trimmed == host {
+		// Not a service URL; do not rewrite.
+		return endpoint
+	}
+	service, namespace, found := strings.Cut(trimmed, ".")
+	if !found || service == "" || namespace == "" {
+		return endpoint
+	}
+	parsed.Scheme = "https"
+	parsed.Host = fmt.Sprintf("%s-%s.%s", service, namespace, r.local.RouteSuffix)
+	return parsed.String()
+}
+
+// guardrailTransport builds the HTTP transport for guardrail test calls. The
+// dialMap is a local-development override: it redirects TCP connections to a
+// guardrail service hostname (typically an `oc port-forward` listener) while
+// leaving the request URL untouched, so TLS SNI and certificate validation
+// against the service serving CA keep working. Keys are exact hostnames, or
+// wildcard patterns like "*.svc.cluster.local" matching any subdomain of the
+// suffix; exact entries take precedence over wildcards.
+func guardrailTransport(tlsConfig *tls.Config, dialMap map[string]string) *http.Transport {
+	transport := &http.Transport{
+		// Trust the service serving CA that signs the guardrail service
+		// certificate; falls back to the system pool.
+		TLSClientConfig: tlsConfig,
+	}
+	if len(dialMap) == 0 {
+		return transport
+	}
+	baseDialer := &net.Dialer{Timeout: 10 * time.Second}
+	transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		if host, _, err := net.SplitHostPort(addr); err == nil {
+			if override, ok := dialMap[host]; ok {
+				addr = override
+			} else {
+				for pattern, override := range dialMap {
+					if strings.HasPrefix(pattern, "*.") && strings.HasSuffix(host, pattern[1:]) {
+						addr = override
+						break
+					}
+				}
+			}
+		}
+		return baseDialer.DialContext(ctx, network, addr)
+	}
+	return transport
 }
 
 // validateGuardrailEndpoint checks that a deployment endpoint is an
@@ -158,6 +276,51 @@ func (r *GuardrailsRepository) resolveMainModel(client k8s.KubernetesClientInter
 			if name := mainModelNameFromConfig(configYAML); name != "" {
 				return name
 			}
+		}
+	}
+	return ""
+}
+
+// guardrailModelsResponse is the subset of the OpenAI-compatible /v1/models
+// response the model name resolution needs.
+type guardrailModelsResponse struct {
+	Data []struct {
+		ID string `json:"id"`
+	} `json:"data"`
+}
+
+// fetchGuardrailModelName asks the guardrail service which model it is wired
+// to, through its OpenAI-compatible /v1/models endpoint. Deployments wired
+// only through the MAIN_MODEL_BASE_URL environment variable carry no model
+// name of their own; the guardrail still knows and reports it. Failures and
+// empty responses yield an empty string.
+func fetchGuardrailModelName(ctx context.Context, httpClient *http.Client, endpoint, token string) string {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimSuffix(endpoint, "/")+"/v1/models", nil)
+	if err != nil {
+		return ""
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return ""
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return ""
+	}
+	var models guardrailModelsResponse
+	if err := json.Unmarshal(body, &models); err != nil {
+		return ""
+	}
+	for _, model := range models.Data {
+		if name := strings.TrimSpace(model.ID); name != "" {
+			return name
 		}
 	}
 	return ""

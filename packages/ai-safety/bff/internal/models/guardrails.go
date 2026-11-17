@@ -54,12 +54,28 @@ type GuardrailCondition struct {
 
 // GuardrailConfigSource describes a ConfigMap referenced by a NemoGuardrails deployment.
 type GuardrailConfigSource struct {
-	Name               string   `json:"name"`
-	Found              bool     `json:"found"`
-	Keys               []string `json:"keys,omitempty"`
-	HasModelSpec       bool     `json:"hasModelSpec,omitempty"`
-	IsOperatorTemplate bool     `json:"isOperatorTemplate,omitempty"`
-	MainModel          string   `json:"mainModel,omitempty"`
+	Name string `json:"name"`
+	// Found reports whether the referenced ConfigMap exists in the
+	// deployment's namespace.
+	Found bool `json:"found"`
+	// Keys lists the ConfigMap's data keys.
+	Keys []string `json:"keys,omitempty"`
+	// HasModelSpec reports whether the config.yaml declares a models section.
+	HasModelSpec bool `json:"hasModelSpec,omitempty"`
+	// IsOperatorTemplate reports whether the ConfigMap carries the
+	// trustyai-service-operator label.
+	IsOperatorTemplate bool `json:"isOperatorTemplate,omitempty"`
+	// IsDashboardManaged reports whether the ConfigMap was created by the
+	// dashboard (the per-deployment template copies).
+	IsDashboardManaged bool `json:"isDashboardManaged,omitempty"`
+	// TemplateName is the name of the template the ConfigMap was copied from,
+	// when the dashboard recorded it.
+	TemplateName string `json:"templateName,omitempty"`
+	// TemplateNamespace is the namespace of the template the ConfigMap was
+	// copied from, when the dashboard recorded it.
+	TemplateNamespace string `json:"templateNamespace,omitempty"`
+	// MainModel is the model name of the config.yaml main model entry.
+	MainModel string `json:"mainModel,omitempty"`
 }
 
 // GuardrailDeployment is a NemoGuardrails deployment in a namespace.
@@ -69,6 +85,7 @@ type GuardrailDeployment struct {
 	Phase         string                  `json:"phase"`
 	Ready         bool                    `json:"ready"`
 	ModelWired    bool                    `json:"modelWired"`
+	MainModel     string                  `json:"mainModel,omitempty"`
 	Endpoint      string                  `json:"endpoint,omitempty"`
 	Replicas      *int64                  `json:"replicas,omitempty"`
 	CreatedAt     string                  `json:"createdAt"`
