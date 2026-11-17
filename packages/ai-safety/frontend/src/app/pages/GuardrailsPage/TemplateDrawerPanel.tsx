@@ -115,16 +115,24 @@ const TemplateDrawerPanel: React.FC<TemplateDrawerPanelProps> = ({ template, onC
                 This template runs without calling an LLM (passthrough).
               </Alert>
             )}
-            {detail.files.map((file) => (
-              <div key={file.key} className="pf-v6-u-mb-lg">
-                <Title headingLevel="h4" size="md" className="pf-v6-u-mb-xs">
-                  {file.key}
-                </Title>
-                <CodeBlock>
-                  <CodeBlockCode>{file.content}</CodeBlockCode>
-                </CodeBlock>
-              </div>
-            ))}
+            {detail.files
+              .filter((file) => file.key === 'config.yaml')
+              .map((file) => (
+                <div key={file.key} className="pf-v6-u-mb-lg">
+                  <Title headingLevel="h4" size="md" className="pf-v6-u-mb-xs">
+                    {file.key}
+                  </Title>
+                  <CodeBlock>
+                    <CodeBlockCode>{file.content}</CodeBlockCode>
+                  </CodeBlock>
+                </div>
+              ))}
+            {detail.files.length > 0 &&
+              !detail.files.some((file) => file.key === 'config.yaml') && (
+                <Alert variant="info" isInline title="No config.yaml">
+                  This template does not include a config.yaml file.
+                </Alert>
+              )}
           </>
         )}
       </DrawerPanelBody>

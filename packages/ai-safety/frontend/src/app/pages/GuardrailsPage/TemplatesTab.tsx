@@ -44,9 +44,7 @@ const TemplatesTab: React.FC<TemplatesTabProps> = ({
       return templates;
     }
     return templates.filter((template) =>
-      `${template.name} ${getTemplateDisplayName(template.name)} ${template.keys.join(' ')} ${
-        template.description ?? ''
-      }`
+      `${template.name} ${getTemplateDisplayName(template.name)} ${template.description ?? ''}`
         .toLowerCase()
         .includes(trimmed),
     );
@@ -97,10 +95,9 @@ const TemplatesTab: React.FC<TemplatesTabProps> = ({
       <Table aria-label="Guardrail templates" data-testid="guardrails-templates-table">
         <Thead>
           <Tr>
-            <Th width={30}>Template</Th>
-            <Th width={20}>Configuration files</Th>
-            <Th width={20}>Models</Th>
-            <Th width={10}>Rail flows</Th>
+            <Th width={45}>Template</Th>
+            <Th width={15}>Guard actions</Th>
+            <Th width={15}>Applied to</Th>
             <Th width={15}>Created</Th>
             <Th width={10}>Actions</Th>
           </Tr>
@@ -109,22 +106,29 @@ const TemplatesTab: React.FC<TemplatesTabProps> = ({
           {filteredTemplates.map((template: GuardrailTemplate) => (
             <Tr
               key={`${template.namespace}/${template.name}`}
-              onRowClick={() => onSelect(template)}
+              onRowClick={(event) => {
+                // Ignore clicks that propagate up from the deploy button and
+                // other interactive descendants — they have their own handlers.
+                const clickedInteractiveDescendant =
+                  event?.target instanceof Element &&
+                  !!event.target.closest('a, button, input, label');
+                if (!clickedInteractiveDescendant) {
+                  onSelect(template);
+                }
+              }}
               isClickable
               data-testid={`guardrails-template-row-${getTemplateDisplayName(template.name)}`}
             >
               <Td dataLabel="Template">
                 <Title headingLevel="h4" size="md">
                   {getTemplateDisplayName(template.name)}
-                  {template.source === 'user' && (
-                    <Label
-                      color="grey"
-                      className="pf-v6-u-ml-sm"
-                      data-testid={`guardrails-template-origin-${getTemplateDisplayName(template.name)}`}
-                    >
-                      {template.namespace}
-                    </Label>
-                  )}
+                  <Label
+                    color="grey"
+                    className="pf-v6-u-ml-sm"
+                    data-testid={`guardrails-template-origin-${getTemplateDisplayName(template.name)}`}
+                  >
+                    {template.source === 'user' ? 'Custom' : 'Platform'}
+                  </Label>
                 </Title>
                 {template.description && (
                   <span
@@ -135,13 +139,24 @@ const TemplatesTab: React.FC<TemplatesTabProps> = ({
                   </span>
                 )}
               </Td>
-              <Td dataLabel="Configuration files">{template.keys.join(', ')}</Td>
-              <Td dataLabel="Models">
-                {template.summary.models.length > 0
-                  ? template.summary.models.join(', ')
-                  : 'No model required'}
+              <Td dataLabel="Guard actions">
+                <span
+                  data-testid={`guardrails-template-actions-${getTemplateDisplayName(template.name)}`}
+                >
+                  {template.actions && template.actions.length > 0
+                    ? template.actions.join(', ')
+                    : '—'}
+                </span>
               </Td>
-              <Td dataLabel="Rail flows">{template.summary.railFlows.length}</Td>
+              <Td dataLabel="Applied to">
+                <span
+                  data-testid={`guardrails-template-locations-${getTemplateDisplayName(template.name)}`}
+                >
+                  {template.locations && template.locations.length > 0
+                    ? template.locations.join(', ')
+                    : '—'}
+                </span>
+              </Td>
               <Td dataLabel="Created">{formatDate(template.createdAt)}</Td>
               <Td dataLabel="Actions">
                 <Button
@@ -156,7 +171,7 @@ const TemplatesTab: React.FC<TemplatesTabProps> = ({
           ))}
           {filteredTemplates.length === 0 && (
             <Tr>
-              <Td colSpan={6}>
+              <Td colSpan={5}>
                 <EmptyState
                   variant={EmptyStateVariant.sm}
                   icon={SearchIcon}

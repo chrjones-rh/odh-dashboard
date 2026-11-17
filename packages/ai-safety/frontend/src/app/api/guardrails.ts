@@ -130,6 +130,7 @@ export const testGuardrailDeployment = (
       hostPath,
       `${URL_PREFIX}/api/${BFF_API_VERSION}/guardrails/deployments/${name}/test`,
       request,
+      { namespace },
     ),
   ).then((response) => {
     if (isModArchResponse<GuardrailTestResult>(response)) {

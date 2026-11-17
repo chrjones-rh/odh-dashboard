@@ -73,12 +73,34 @@ describe('getConfigSourceMode', () => {
     expect(getConfigSourceMode(makeSource({ found: false }))).toBe('missing');
   });
 
-  it('should classify configmaps with a model spec as custom', () => {
-    expect(getConfigSourceMode(makeSource({ hasModelSpec: true }))).toBe('custom');
+  it('should classify dashboard-managed template copies as template', () => {
+    expect(getConfigSourceMode(makeSource({ isDashboardManaged: true }))).toBe('template');
   });
 
-  it('should classify configmaps without a model spec as template', () => {
-    expect(getConfigSourceMode(makeSource({ hasModelSpec: false }))).toBe('template');
+  it('should classify copies with a recorded template source as template', () => {
+    expect(getConfigSourceMode(makeSource({ templateName: 'default-pii' }))).toBe('template');
+  });
+
+  it('should classify operator templates as template', () => {
+    expect(getConfigSourceMode(makeSource({ isOperatorTemplate: true }))).toBe('template');
+  });
+
+  it('should classify dashboard copies with model wiring as template', () => {
+    // The dashboard's own model wiring injects a models section into the
+    // copied config.yaml; that must not flip the classification.
+    expect(
+      getConfigSourceMode(
+        makeSource({ isDashboardManaged: true, hasModelSpec: true, templateName: 'default-pii' }),
+      ),
+    ).toBe('template');
+  });
+
+  it('should classify user-managed configmaps as custom', () => {
+    expect(getConfigSourceMode(makeSource({}))).toBe('custom');
+  });
+
+  it('should classify user-managed configmaps with a model spec as custom', () => {
+    expect(getConfigSourceMode(makeSource({ hasModelSpec: true }))).toBe('custom');
   });
 });
 

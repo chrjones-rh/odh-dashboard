@@ -1,3 +1,24 @@
+// Monaco instantiates its editor asynchronously after the PF CodeEditor
+// container mounts; this returns the editor instances currently attached
+// inside the container (empty until Monaco has caught up).
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const editorsInContainer = (container: HTMLElement): any[] => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const win = container.ownerDocument.defaultView as any;
+  if (!win?.monaco) {
+    return [];
+  }
+  return (
+    win.monaco.editor
+      .getEditors()
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .filter((editor: any) => {
+        const node = editor.getDomNode() as HTMLElement | null;
+        return node !== null && container.contains(node);
+      })
+  );
+};
+
 class GuardrailsPage {
   visit() {
     cy.visit('/guardrails');
@@ -89,8 +110,19 @@ class GuardrailsPage {
     return cy.findByTestId('guardrail-test-verdict');
   }
 
-  findTestButton(name: string) {
+  findTestAction(name: string) {
     return cy.findByTestId(`guardrails-deployment-test-${name}`);
+  }
+
+  findDeleteAction(name: string) {
+    return cy.findByTestId(`guardrails-deployment-delete-${name}`);
+  }
+
+  /** Opens the row actions menu and returns the chain for item selection. */
+  openDeploymentActions(name: string) {
+    return this.findDeploymentRow(name)
+      .findByRole('button', { name: `${name} actions` })
+      .click();
   }
 
   findDeploymentRow(name: string) {
@@ -169,28 +201,22 @@ class GuardrailsPage {
 
   /** Reads the config editor content from the Monaco model. */
   getTemplateConfigYAML(): Cypress.Chainable<string> {
-    return this.findTemplateConfigEditor().then(($container) =>
-      cy.window().then((win) => {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { monaco } = win as any;
-        if (!monaco) {
-          throw new Error('Monaco editor was not found on window');
-        }
-        const editors = monaco.editor
-          .getEditors()
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          .filter((editor: any) => {
-            const node = editor.getDomNode() as HTMLElement | null;
-            return node !== null && $container[0].contains(node);
-          });
-        expect(editors, 'one Monaco editor in the modal').to.have.length(1);
+    // The editor instance attaches asynchronously after the container mounts;
+    // should() retries the assertion until Monaco has created it.
+    return this.findTemplateConfigEditor()
+      .should(($container) => {
+        expect(editorsInContainer($container[0]), 'one Monaco editor in the modal').to.have.length(
+          1,
+        );
+      })
+      .then(($container) => {
+        const editors = editorsInContainer($container[0]);
         const model = editors[0].getModel();
         if (!model) {
           throw new Error('The code editor has no Monaco model');
         }
         return model.getValue() as string;
-      }),
-    );
+      });
   }
 }
 

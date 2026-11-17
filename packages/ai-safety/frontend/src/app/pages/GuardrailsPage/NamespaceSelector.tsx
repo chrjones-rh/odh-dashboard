@@ -47,7 +47,11 @@ const NamespaceSelector: React.FC<NamespaceSelectorProps> = ({
   );
 
   return (
-    <Flex alignItems={{ default: 'alignItemsCenter' }} gap={{ default: 'gapSm' }}>
+    <Flex
+      alignItems={{ default: 'alignItemsCenter' }}
+      flexWrap={{ default: 'nowrap' }}
+      gap={{ default: 'gapSm' }}
+    >
       <FlexItem>
         <FolderOpenIcon />
       </FlexItem>

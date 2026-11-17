@@ -46,6 +46,8 @@ const TestGuardrailModal: React.FC<TestGuardrailModalProps> = ({ deployment, onC
     setIsRunning(true);
     setError(null);
     try {
+      // The BFF resolves the wired model name (deployment configuration or
+      // the guardrail service itself); the test only needs the message.
       const response = await testGuardrailDeployment('', deployment.namespace, deployment.name, {
         message: message.trim(),
       });

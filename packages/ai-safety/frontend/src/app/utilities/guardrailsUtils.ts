@@ -26,7 +26,14 @@ export const getConfigSourceMode = (source: GuardrailConfigSource): ConfigSource
   if (!source.found) {
     return 'missing';
   }
-  return source.hasModelSpec ? 'custom' : 'template';
+  // A config.yaml models section is NOT a custom-config signal: the
+  // dashboard's own model wiring injects one into template copies. Origin is
+  // what the ConfigMap records: dashboard copies (with their recorded
+  // template), operator templates, or user-managed ConfigMaps.
+  if (source.templateName || source.isOperatorTemplate || source.isDashboardManaged) {
+    return 'template';
+  }
+  return 'custom';
 };
 
 export const formatDate = (iso: string): string => {

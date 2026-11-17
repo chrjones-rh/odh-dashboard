@@ -2,36 +2,45 @@ import React from 'react';
 import {
   Alert,
   Bullseye,
-  Button,
   EmptyState,
   EmptyStateBody,
   EmptyStateVariant,
   Label,
+  MenuToggle,
   Spinner,
   Title,
-  Tooltip,
 } from '@patternfly/react-core';
-import { SearchIcon } from '@patternfly/react-icons';
-import { Table, Tbody, Td, Th, Thead, Tr } from '@patternfly/react-table';
+import { RhUiEllipsisVerticalFillIcon, SearchIcon } from '@patternfly/react-icons';
+import { ActionsColumn, Table, Tbody, Td, Th, Thead, Tr } from '@patternfly/react-table';
 import {
   getConfigSourceMode,
   getDeploymentStatus,
+  getTemplateDisplayName,
   formatDate,
 } from '~/app/utilities/guardrailsUtils';
 import { GuardrailConfigSource, GuardrailDeployment } from '~/app/types';
 
-const configSourceLabels: Record<string, string> = {
-  template: 'Template',
-  custom: 'Custom config',
-  missing: 'Missing',
-};
-
 const ConfigSourceLabel: React.FC<{ source: GuardrailConfigSource }> = ({ source }) => {
   const mode = getConfigSourceMode(source);
   const color = mode === 'template' ? 'teal' : mode === 'custom' ? 'blue' : 'red';
+  let text: string;
+  switch (mode) {
+    case 'template':
+      // Dashboard copies are named after the deployment, which would be
+      // redundant — name the template the copy was made from instead.
+      text = source.templateName
+        ? `Template · ${getTemplateDisplayName(source.templateName)}`
+        : 'Template';
+      break;
+    case 'custom':
+      text = `Custom config · ${source.name}`;
+      break;
+    default:
+      text = `Missing · ${source.name}`;
+  }
   return (
     <Label key={source.name} color={color} className="pf-v6-u-mr-xs">
-      {configSourceLabels[mode]} · {source.name}
+      {text}
     </Label>
   );
 };
@@ -95,7 +104,16 @@ const DeploymentsTab: React.FC<DeploymentsTabProps> = ({
         {deployments.map((deployment: GuardrailDeployment) => (
           <Tr
             key={deployment.name}
-            onRowClick={() => onSelect(deployment.name)}
+            onRowClick={(event) => {
+              // Ignore clicks that propagate up from the actions menu and
+              // other interactive descendants — they have their own handlers.
+              const clickedInteractiveDescendant =
+                event?.target instanceof Element &&
+                !!event.target.closest('a, button, input, label');
+              if (!clickedInteractiveDescendant) {
+                onSelect(deployment.name);
+              }
+            }}
             isClickable
             data-testid={`guardrails-deployment-row-${deployment.name}`}
           >
@@ -114,32 +132,48 @@ const DeploymentsTab: React.FC<DeploymentsTabProps> = ({
             </Td>
             <Td dataLabel="Endpoint">{deployment.endpoint ?? '—'}</Td>
             <Td dataLabel="Created">{formatDate(deployment.createdAt)}</Td>
-            <Td dataLabel="Actions">
-              <Tooltip
-                content={
-                  deployment.ready && deployment.modelWired
-                    ? 'Run a test message through this guardrail'
-                    : 'The deployment must be ready and wired to a model before it can be tested'
-                }
-              >
-                <span className="pf-v6-u-display-inline-block">
-                  <Button
-                    variant="secondary"
-                    isDisabled={!deployment.ready || !deployment.modelWired}
-                    onClick={() => onTest(deployment)}
-                    data-testid={`guardrails-deployment-test-${deployment.name}`}
-                  >
-                    Test
-                  </Button>
-                </span>
-              </Tooltip>{' '}
-              <Button
-                variant="danger"
-                onClick={() => onDelete(deployment)}
-                data-testid={`guardrails-deployment-delete-${deployment.name}`}
-              >
-                Delete
-              </Button>
+            <Td isActionCell>
+              <ActionsColumn
+                items={[
+                  {
+                    title: (
+                      <span data-testid={`guardrails-deployment-test-${deployment.name}`}>
+                        Test
+                      </span>
+                    ),
+                    isAriaDisabled: !deployment.ready || !deployment.modelWired,
+                    ...(deployment.ready && deployment.modelWired
+                      ? {}
+                      : {
+                          tooltipProps: {
+                            content:
+                              'The deployment must be ready and wired to a model before it can be tested',
+                            position: 'left' as const,
+                          },
+                        }),
+                    onClick: () => onTest(deployment),
+                  },
+                  {
+                    title: (
+                      <span data-testid={`guardrails-deployment-delete-${deployment.name}`}>
+                        Delete
+                      </span>
+                    ),
+                    onClick: () => onDelete(deployment),
+                  },
+                ]}
+                actionsToggle={({ toggleRef, onToggle, isOpen }) => (
+                  <MenuToggle
+                    aria-label={`${deployment.name} actions`}
+                    ref={toggleRef}
+                    onClick={(event) => onToggle(event)}
+                    isExpanded={isOpen}
+                    variant="plain"
+                    icon={<RhUiEllipsisVerticalFillIcon />}
+                    data-testid={`guardrails-deployment-actions-${deployment.name}`}
+                  />
+                )}
+              />
             </Td>
           </Tr>
         ))}

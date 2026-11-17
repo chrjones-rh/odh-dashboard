@@ -77,6 +77,9 @@ export type GuardrailConfigSource = {
   keys?: string[];
   hasModelSpec?: boolean;
   isOperatorTemplate?: boolean;
+  isDashboardManaged?: boolean;
+  templateName?: string;
+  templateNamespace?: string;
   mainModel?: string;
 };
 
@@ -86,6 +89,7 @@ export type GuardrailDeployment = {
   phase: string;
   ready: boolean;
   modelWired: boolean;
+  mainModel?: string;
   endpoint?: string;
   replicas?: number;
   createdAt: string;
