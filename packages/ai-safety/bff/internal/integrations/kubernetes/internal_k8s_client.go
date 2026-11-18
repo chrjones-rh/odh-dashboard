@@ -112,6 +112,15 @@ func (kc *InternalKubernetesClient) CanUpdateConfigMaps(ctx context.Context, ide
 	return kc.subjectAccessReview(ctx, identity, "update", "", "configmaps", namespace)
 }
 
+// CanDeleteConfigMaps performs a SubjectAccessReview for the request identity
+// against ConfigMap deletions in the namespace.
+func (kc *InternalKubernetesClient) CanDeleteConfigMaps(ctx context.Context, identity *RequestIdentity, namespace string) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	return kc.subjectAccessReview(ctx, identity, "delete", "", "configmaps", namespace)
+}
+
 // CanListInferenceServices performs a SubjectAccessReview for the request
 // identity against KServe InferenceServices in the namespace.
 func (kc *InternalKubernetesClient) CanListInferenceServices(ctx context.Context, identity *RequestIdentity, namespace string) (bool, error) {

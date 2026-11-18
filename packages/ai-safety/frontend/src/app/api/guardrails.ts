@@ -173,6 +173,22 @@ export const createGuardrailTemplate = (
     throw new Error('Invalid response format');
   });
 
+export const deleteGuardrailTemplate = (
+  hostPath: string,
+  namespace: string,
+  name: string,
+): Promise<void> =>
+  handleRestFailures(
+    restDELETE(
+      hostPath,
+      `${URL_PREFIX}/api/${BFF_API_VERSION}/guardrails/templates/${name}`,
+      {},
+      { namespace },
+      // The BFF responds with 204 No Content (an empty body); skip JSON parsing.
+      { parseJSON: false },
+    ),
+  ).then(() => undefined);
+
 export const updateGuardrailTemplate = (
   hostPath: string,
   namespace: string,

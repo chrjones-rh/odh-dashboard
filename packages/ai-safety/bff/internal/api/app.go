@@ -192,6 +192,7 @@ func (app *App) Routes() http.Handler {
 	apiRouter.POST(GuardrailsTemplatesPath, app.CreateGuardrailTemplateHandler)
 	apiRouter.GET(GuardrailsTemplateDetailPath, app.GetGuardrailTemplateHandler)
 	apiRouter.PUT(GuardrailsTemplateDetailPath, app.UpdateGuardrailTemplateHandler)
+	apiRouter.DELETE(GuardrailsTemplateDetailPath, app.DeleteGuardrailTemplateHandler)
 	apiRouter.GET(GuardrailsDeploymentsPath, app.AttachNamespace(app.GetGuardrailDeploymentsHandler))
 	apiRouter.POST(GuardrailsDeploymentsPath, app.CreateGuardrailDeploymentHandler)
 	apiRouter.GET(GuardrailsDeploymentDetailPath, app.AttachNamespace(app.GetGuardrailDeploymentHandler))

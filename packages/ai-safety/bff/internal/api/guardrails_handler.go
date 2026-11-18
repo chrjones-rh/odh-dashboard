@@ -524,6 +524,58 @@ func (app *App) DeleteGuardrailDeploymentHandler(w http.ResponseWriter, r *http.
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// DeleteGuardrailTemplateHandler deletes a user-created guardrail template.
+// Access is gated by a SelfSubjectAccessReview for deleting ConfigMaps in the
+// namespace; operator-managed templates and deployment configuration copies
+// are rejected.
+func (app *App) DeleteGuardrailTemplateHandler(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
+	ctx := r.Context()
+	name := ps.ByName("name")
+	namespace := r.URL.Query().Get(string(constants.NamespaceHeaderParameterKey))
+	if namespace == "" {
+		app.badRequestResponse(w, r, fmt.Errorf("missing required query parameter: namespace"))
+		return
+	}
+
+	identity, ok := ctx.Value(constants.RequestIdentityKey).(*kubernetes.RequestIdentity)
+	if !ok || identity == nil {
+		app.badRequestResponse(w, r, fmt.Errorf("missing RequestIdentity in context"))
+		return
+	}
+
+	client, err := app.kubernetesClientFactory.GetClient(ctx)
+	if err != nil {
+		app.serverErrorResponse(w, r, fmt.Errorf("failed to get Kubernetes client: %w", err))
+		return
+	}
+
+	allowed, err := client.CanDeleteConfigMaps(ctx, identity, namespace)
+	if err != nil {
+		app.serverErrorResponse(w, r, err)
+		return
+	}
+	if !allowed {
+		app.forbiddenResponse(w, r, fmt.Sprintf("user is not allowed to delete ConfigMaps in namespace %s", namespace))
+		return
+	}
+
+	if err := app.repositories.Guardrails.DeleteTemplate(client, ctx, namespace, name); err != nil {
+		var notManaged *repositories.NotDashboardManagedError
+		var deploymentConfig *repositories.IsDeploymentConfigError
+		switch {
+		case apierrors.IsNotFound(err):
+			app.notFoundResponse(w, r)
+		case errors.As(err, &notManaged), errors.As(err, &deploymentConfig):
+			app.badRequestResponse(w, r, err)
+		default:
+			app.serverErrorResponse(w, r, err)
+		}
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // TestGuardrailDeploymentHandler runs a test message through a guardrail
 // deployment: the BFF proxies the check and chat completion calls to the
 // guardrail service with the requesting user's token. Access is gated by a

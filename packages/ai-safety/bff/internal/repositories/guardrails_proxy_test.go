@@ -90,7 +90,7 @@ func TestInjectMainModel(t *testing.T) {
 rails:
   input:
     flows:
-      - mask pii
+      - mask sensitive data on input
 `,
 		},
 		{
@@ -146,7 +146,7 @@ rails:
 }
 
 func TestInjectMainModelPreservesOtherContent(t *testing.T) {
-	configYAML := "passthrough: true\nrails:\n  input:\n    flows:\n      - mask pii\n"
+	configYAML := "passthrough: true\nrails:\n  input:\n    flows:\n      - mask sensitive data on input\n"
 	wiring := &models.GuardrailModelWiring{Name: "my-model", Endpoint: "https://my-model.svc.cluster.local/v1"}
 
 	modified, err := injectMainModel(configYAML, wiring)

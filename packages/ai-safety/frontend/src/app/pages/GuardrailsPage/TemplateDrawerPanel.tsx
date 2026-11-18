@@ -19,7 +19,7 @@ import {
   Spinner,
   Title,
 } from '@patternfly/react-core';
-import { PencilAltIcon } from '@patternfly/react-icons';
+import { PencilAltIcon, TrashIcon } from '@patternfly/react-icons';
 import { useGuardrailTemplate } from '~/app/hooks/useGuardrails';
 import { getTemplateDisplayName } from '~/app/utilities/guardrailsUtils';
 import { GuardrailTemplate } from '~/app/types';
@@ -28,9 +28,15 @@ type TemplateDrawerPanelProps = {
   template: GuardrailTemplate | null;
   onClose: () => void;
   onEdit: (template: GuardrailTemplate) => void;
+  onDelete: (template: GuardrailTemplate) => void;
 };
 
-const TemplateDrawerPanel: React.FC<TemplateDrawerPanelProps> = ({ template, onClose, onEdit }) => {
+const TemplateDrawerPanel: React.FC<TemplateDrawerPanelProps> = ({
+  template,
+  onClose,
+  onEdit,
+  onDelete,
+}) => {
   const [detail, detailLoaded, detailError] = useGuardrailTemplate(
     template?.name ?? null,
     template?.namespace ?? '',
@@ -45,13 +51,22 @@ const TemplateDrawerPanel: React.FC<TemplateDrawerPanelProps> = ({ template, onC
       <DrawerHead>
         <DrawerActions>
           {template?.source === 'user' && (
-            <Button
-              variant="plain"
-              aria-label={`Edit ${template.name}`}
-              icon={<PencilAltIcon />}
-              onClick={() => onEdit(template)}
-              data-testid={`guardrails-template-edit-${getTemplateDisplayName(template.name)}`}
-            />
+            <>
+              <Button
+                variant="plain"
+                aria-label={`Edit ${template.name}`}
+                icon={<PencilAltIcon />}
+                onClick={() => onEdit(template)}
+                data-testid={`guardrails-template-edit-${getTemplateDisplayName(template.name)}`}
+              />
+              <Button
+                variant="plain"
+                aria-label={`Delete ${template.name}`}
+                icon={<TrashIcon />}
+                onClick={() => onDelete(template)}
+                data-testid={`guardrails-template-delete-${getTemplateDisplayName(template.name)}`}
+              />
+            </>
           )}
           <DrawerCloseButton onClick={onClose} data-testid="guardrails-template-drawer-close" />
         </DrawerActions>

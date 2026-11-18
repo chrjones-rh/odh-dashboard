@@ -123,6 +123,52 @@ func (r *GuardrailsRepository) GetTemplate(client k8s.KubernetesClientInterface,
 	return detail, nil
 }
 
+// IsDeploymentConfigError reports a delete attempt against a per-deployment
+// configuration copy rather than a template. Deleting the copy would break
+// its guardrail deployment; the deployment should be deleted instead.
+type IsDeploymentConfigError struct {
+	Name string
+}
+
+func (e *IsDeploymentConfigError) Error() string {
+	return fmt.Sprintf(
+		"config map %s is a guardrail deployment configuration, not a template; delete its guardrail deployment instead",
+		e.Name)
+}
+
+// DeleteTemplate deletes a user-created guardrail template. Operator-managed
+// templates and hand-written ConfigMaps are rejected, and so are the
+// per-deployment configuration copies (deleting one would break its
+// deployment).
+func (r *GuardrailsRepository) DeleteTemplate(
+	client k8s.KubernetesClientInterface,
+	ctx context.Context,
+	namespace, name string,
+) error {
+	configMap, err := client.GetConfigMap(ctx, namespace, name)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return err
+		}
+		return fmt.Errorf("error fetching guardrail template %s: %w", name, err)
+	}
+
+	if isDeploymentConfig(configMap) {
+		return &IsDeploymentConfigError{Name: name}
+	}
+	if configMap.Labels[constants.DashboardManagedLabel] != "true" {
+		return &NotDashboardManagedError{Name: name}
+	}
+
+	if err := client.DeleteConfigMap(ctx, namespace, name); err != nil {
+		if apierrors.IsNotFound(err) {
+			return err
+		}
+		return err
+	}
+	return nil
+}
+
 // DeleteDeployment deletes a NemoGuardrails deployment and the ConfigMap
 // copies the dashboard created for it. ConfigMaps that are not
 // dashboard-managed (for example user-created templates referenced by a
@@ -296,6 +342,95 @@ func validateTemplateConfigYAML(configYAML string) error {
 	return nil
 }
 
+// selfCheckPromptTasks maps the self-check rail flows to the prompt task
+// each requires: the server rejects a config at load time when a self-check
+// flow has no matching prompt template.
+var selfCheckPromptTasks = map[string]string{
+	"self check input":         "self_check_input",
+	"self check output":        "self_check_output",
+	"self check facts":         "self_check_facts",
+	"self check hallucination": "self_check_hallucination",
+}
+
+// railFlowName strips the trailing flow parameters from a rail flow entry:
+// `hf classifier check input $classifier="prompt-injection"` names the flow
+// `hf classifier check input`.
+func railFlowName(flow string) string {
+	return strings.TrimSpace(strings.SplitN(flow, " $", 2)[0])
+}
+
+// validateTemplateRails checks a config.yaml's rail flow names, rails.config
+// keys and self-check prompt requirements against the server's known
+// vocabulary, so mistakes surface at save time with a precise message
+// instead of as a generic guardrail load failure at deploy or test time.
+// The server ignores unknown rails.config keys (a typo silently disables a
+// rail's configuration) and rejects unknown flows and missing self-check
+// prompts at config load.
+func validateTemplateRails(configYAML string) error {
+	var parsed map[string]interface{}
+	if err := yaml.Unmarshal([]byte(configYAML), &parsed); err != nil {
+		return nil // malformed YAML is reported by validateTemplateConfigYAML
+	}
+	rails, _ := parsed["rails"].(map[string]interface{})
+	if len(rails) == 0 {
+		return nil
+	}
+
+	knownFlows := make(map[string]bool, len(constants.KnownRailFlows))
+	for _, flow := range constants.KnownRailFlows {
+		knownFlows[flow] = true
+	}
+
+	promptTasks := map[string]bool{}
+	if prompts, ok := parsed["prompts"].([]interface{}); ok {
+		for _, promptRaw := range prompts {
+			prompt, ok := promptRaw.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			if task := strings.TrimSpace(stringValue(prompt["task"])); task != "" {
+				promptTasks[task] = true
+			}
+		}
+	}
+
+	for _, position := range []string{"input", "output"} {
+		positionRails, _ := rails[position].(map[string]interface{})
+		flows, _ := positionRails["flows"].([]interface{})
+		for _, flowRaw := range flows {
+			flow, ok := flowRaw.(string)
+			if !ok || strings.TrimSpace(flow) == "" {
+				continue
+			}
+			name := railFlowName(flow)
+			if !knownFlows[name] {
+				return fmt.Errorf(
+					"unknown %s rail flow %q; the server recognizes these flows: %s",
+					position, name, strings.Join(constants.KnownRailFlows, ", "))
+			}
+			if task, requiresPrompt := selfCheckPromptTasks[name]; requiresPrompt && !promptTasks[task] {
+				return fmt.Errorf(
+					"rail flow %q requires a prompts entry with task %q",
+					name, task)
+			}
+		}
+	}
+
+	railsConfig, _ := rails["config"].(map[string]interface{})
+	knownConfigKeys := make(map[string]bool, len(constants.KnownRailsConfigKeys))
+	for _, key := range constants.KnownRailsConfigKeys {
+		knownConfigKeys[key] = true
+	}
+	for key := range railsConfig {
+		if !knownConfigKeys[key] {
+			return fmt.Errorf(
+				"unknown rails.config key %q; recognized keys are: %s (unknown keys are ignored by the server, so the rail would run without its configuration)",
+				key, strings.Join(constants.KnownRailsConfigKeys, ", "))
+		}
+	}
+	return nil
+}
+
 // templateAnnotations builds the annotations for a user-created template
 // ConfigMap from the upsert request.
 func templateAnnotations(description string) map[string]string {
@@ -318,6 +453,9 @@ func (r *GuardrailsRepository) CreateTemplate(
 		return nil, err
 	}
 	if err := validateTemplateConfigYAML(request.ConfigYAML); err != nil {
+		return nil, err
+	}
+	if err := validateTemplateRails(request.ConfigYAML); err != nil {
 		return nil, err
 	}
 
@@ -357,6 +495,9 @@ func (r *GuardrailsRepository) UpdateTemplate(
 		return nil, err
 	}
 	if err := validateTemplateConfigYAML(request.ConfigYAML); err != nil {
+		return nil, err
+	}
+	if err := validateTemplateRails(request.ConfigYAML); err != nil {
 		return nil, err
 	}
 

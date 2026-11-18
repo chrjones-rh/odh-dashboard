@@ -57,6 +57,9 @@ type KubernetesClientInterface interface {
 	// CanUpdateConfigMaps reports whether the request identity may update
 	// ConfigMaps in the namespace.
 	CanUpdateConfigMaps(ctx context.Context, identity *RequestIdentity, namespace string) (bool, error)
+	// CanDeleteConfigMaps reports whether the request identity may delete
+	// ConfigMaps in the namespace.
+	CanDeleteConfigMaps(ctx context.Context, identity *RequestIdentity, namespace string) (bool, error)
 	// CanCreateGuardrailDeployment reports whether the request identity may
 	// create both ConfigMaps and NemoGuardrails custom resources in the namespace.
 	CanCreateGuardrailDeployment(ctx context.Context, identity *RequestIdentity, namespace string) (bool, error)

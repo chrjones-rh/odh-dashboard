@@ -19,6 +19,7 @@ import DeployGuardrailModal from './DeployGuardrailModal';
 import DeleteGuardrailModal from './DeleteGuardrailModal';
 import TestGuardrailModal from './TestGuardrailModal';
 import ManageTemplateModal, { ManageTemplateTarget } from './ManageTemplateModal';
+import DeleteTemplateModal from './DeleteTemplateModal';
 import NamespaceSelector from './NamespaceSelector';
 
 const TEMPLATES_TAB = 0;
@@ -32,6 +33,7 @@ const GuardrailsPage: React.FC = () => {
   const [deleteDeployment, setDeleteDeployment] = React.useState<GuardrailDeployment | null>(null);
   const [testDeployment, setTestDeployment] = React.useState<GuardrailDeployment | null>(null);
   const [manageTemplate, setManageTemplate] = React.useState<ManageTemplateTarget | null>(null);
+  const [deleteTemplate, setDeleteTemplate] = React.useState<GuardrailTemplate | null>(null);
 
   // The selected namespace is persisted (last used) and restored on load,
   // falling back to the first accessible namespace — the same pattern the
@@ -87,6 +89,12 @@ const GuardrailsPage: React.FC = () => {
     [namespaces, updatePreferredNamespace, refreshDeployments],
   );
 
+  const onTemplateDeleted = React.useCallback(() => {
+    setDeleteTemplate(null);
+    setSelectedTemplate(null);
+    refreshTemplates();
+  }, [refreshTemplates]);
+
   const onTemplateSaved = React.useCallback(
     (template: GuardrailTemplate) => {
       setManageTemplate(null);
@@ -105,6 +113,7 @@ const GuardrailsPage: React.FC = () => {
       template={selectedTemplate}
       onClose={() => setSelectedTemplate(null)}
       onEdit={(template) => setManageTemplate({ mode: 'edit', template })}
+      onDelete={setDeleteTemplate}
     />
   ) : (
     <DeploymentDrawerPanel
@@ -184,6 +193,11 @@ const GuardrailsPage: React.FC = () => {
         onDeleted={onDeleted}
       />
       <TestGuardrailModal deployment={testDeployment} onClose={() => setTestDeployment(null)} />
+      <DeleteTemplateModal
+        template={deleteTemplate}
+        onClose={() => setDeleteTemplate(null)}
+        onDeleted={onTemplateDeleted}
+      />
       <ManageTemplateModal
         target={manageTemplate}
         defaultNamespace={namespace}

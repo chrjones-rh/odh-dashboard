@@ -162,6 +162,16 @@ func (kc *TokenKubernetesClient) CanUpdateConfigMaps(ctx context.Context, _ *Req
 	return kc.selfSubjectAccessReview(ctx, "update", "", "configmaps", namespace)
 }
 
+// CanDeleteConfigMaps performs a SelfSubjectAccessReview for the token user
+// against ConfigMap deletions in the namespace.
+// RequestIdentity is unused because the token already represents the user identity.
+func (kc *TokenKubernetesClient) CanDeleteConfigMaps(ctx context.Context, _ *RequestIdentity, namespace string) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	return kc.selfSubjectAccessReview(ctx, "delete", "", "configmaps", namespace)
+}
+
 // CanListInferenceServices performs a SelfSubjectAccessReview for the token
 // user against KServe InferenceServices in the namespace.
 // RequestIdentity is unused because the token already represents the user identity.

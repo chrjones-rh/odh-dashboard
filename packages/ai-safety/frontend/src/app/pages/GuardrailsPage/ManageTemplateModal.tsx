@@ -23,6 +23,28 @@ import { GuardrailTemplate } from '~/app/types';
 
 const TEMPLATE_NAME_PATTERN = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
 
+// Starter skeleton shown for new templates: a working prompt-injection
+// guardrail using a server-provided classifier rail. The model is chosen
+// when the template is deployed.
+const STARTER_CONFIG_YAML = `# Guardrail template: checks user input for prompt injection
+# using a local classifier (no model call needed). The model that allowed
+# messages are forwarded to is chosen when deploying the template.
+passthrough: true
+rails:
+  input:
+    flows:
+      - hf classifier check input $classifier="prompt-injection"
+  config:
+    hf_classifier:
+      prompt-injection:
+        engine: local
+        model: /app/models/prompt-injection
+        task: text-classification
+        threshold: 0.5
+        blocked_labels:
+          - injection
+`;
+
 export type ManageTemplateTarget =
   | { mode: 'create' }
   | { mode: 'edit'; template: GuardrailTemplate };
@@ -69,13 +91,14 @@ const ManageTemplateModal: React.FC<ManageTemplateModalProps> = ({
     }
   }, [isEdit, detail, detailLoaded]);
 
-  // Reset the form when the target changes.
+  // Reset the form when the target changes. New templates start from the
+  // starter skeleton; edits start empty and prefill from the detail.
   React.useEffect(() => {
     if (target) {
       prefillApplied.current = false;
       setName(isEdit ? (editTemplate?.name ?? '') : '');
       setDescription('');
-      setConfigYAML('');
+      setConfigYAML(isEdit ? '' : STARTER_CONFIG_YAML);
       setError(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -230,6 +253,7 @@ const ManageTemplateModal: React.FC<ManageTemplateModalProps> = ({
             title={isEdit ? 'Failed to update template' : 'Failed to create template'}
             isInline
             className="pf-v6-u-mt-md"
+            data-testid="manage-template-error"
           >
             {error.message}
           </Alert>

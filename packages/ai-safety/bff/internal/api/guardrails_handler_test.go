@@ -123,6 +123,10 @@ func (f *guardrailsFakeClient) CanUpdateConfigMaps(_ context.Context, _ *kuberne
 	return f.allowCreate, nil
 }
 
+func (f *guardrailsFakeClient) CanDeleteConfigMaps(_ context.Context, _ *kubernetes.RequestIdentity, _ string) (bool, error) {
+	return f.allowDelete, nil
+}
+
 func (f *guardrailsFakeClient) CanListConfigMaps(_ context.Context, _ *kubernetes.RequestIdentity, _ string) (bool, error) {
 	return f.allowList, nil
 }
@@ -186,7 +190,7 @@ func guardrailsTestConfigMaps() []corev1.ConfigMap {
 				CreationTimestamp: metav1.Now(),
 			},
 			Data: map[string]string{
-				"config.yaml": "passthrough: true\nrails:\n  input:\n    flows:\n      - mask pii\n",
+				"config.yaml": "passthrough: true\nrails:\n  input:\n    flows:\n      - mask sensitive data on input\n",
 			},
 		},
 		{
@@ -779,7 +783,7 @@ func TestCreateGuardrailDeploymentHandlerWithModel(t *testing.T) {
 	configYAML := copied.Data["config.yaml"]
 	assert.Contains(t, configYAML, "model: my-model")
 	assert.Contains(t, configYAML, "base_url: https://my-model.test-ns.svc.cluster.local:8000/v1")
-	assert.Contains(t, configYAML, "mask pii", "template rails must be preserved")
+	assert.Contains(t, configYAML, "mask sensitive data on input", "template rails must be preserved")
 }
 
 func TestCreateGuardrailDeploymentHandlerInvalidModel(t *testing.T) {
@@ -1078,4 +1082,78 @@ func TestUpdateGuardrailTemplateHandlerNotFound(t *testing.T) {
 		"configYAML": "passthrough: false\n",
 	})
 	assert.Equal(t, http.StatusNotFound, recorder.Code)
+}
+
+func TestDeleteGuardrailTemplateHandler(t *testing.T) {
+	userTemplate := corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: "test-ns",
+			Name:      "my-template",
+			Labels: map[string]string{
+				"nemo-guardrails-config":   "true",
+				"opendatahub.io/dashboard": "true",
+			},
+		},
+		Data: map[string]string{"config.yaml": "passthrough: true\n"},
+	}
+	deploymentCopy := corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: "test-ns",
+			Name:      "guardrail-my-deployment",
+			Labels: map[string]string{
+				"nemo-guardrails-config":           "true",
+				"opendatahub.io/dashboard":         "true",
+				"opendatahub.io/deployment-config": "true",
+			},
+			Annotations: map[string]string{
+				"opendatahub.io/template-source": "redhat-ods-applications/some-template",
+			},
+		},
+		Data: map[string]string{"config.yaml": "passthrough: true\n"},
+	}
+
+	t.Run("deletes a user template", func(t *testing.T) {
+		client := &guardrailsFakeClient{
+			configMaps:  []corev1.ConfigMap{userTemplate},
+			allowList:   true,
+			allowDelete: true,
+		}
+		recorder, _ := performGuardrailsRequest(t, client, http.MethodDelete, "/api/v1/guardrails/templates/my-template?namespace=test-ns", nil)
+		assert.Equal(t, http.StatusNoContent, recorder.Code)
+		require.Len(t, client.configMaps, 0)
+	})
+
+	t.Run("forbidden without configmap delete permission", func(t *testing.T) {
+		client := &guardrailsFakeClient{
+			configMaps:  []corev1.ConfigMap{userTemplate},
+			allowList:   true,
+			allowDelete: false,
+		}
+		recorder, _ := performGuardrailsRequest(t, client, http.MethodDelete, "/api/v1/guardrails/templates/my-template?namespace=test-ns", nil)
+		assert.Equal(t, http.StatusForbidden, recorder.Code)
+		require.Len(t, client.configMaps, 1)
+	})
+
+	t.Run("deployment configuration copies are rejected", func(t *testing.T) {
+		client := &guardrailsFakeClient{
+			configMaps:  []corev1.ConfigMap{deploymentCopy},
+			allowList:   true,
+			allowDelete: true,
+		}
+		recorder, _ := performGuardrailsRequest(t, client, http.MethodDelete, "/api/v1/guardrails/templates/guardrail-my-deployment?namespace=test-ns", nil)
+		assert.Equal(t, http.StatusBadRequest, recorder.Code)
+		require.Len(t, client.configMaps, 1)
+
+		var body map[string]interface{}
+		require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &body))
+		errObj, ok := body["error"].(map[string]interface{})
+		require.True(t, ok, "expected error envelope")
+		assert.Contains(t, errObj["message"], "delete its guardrail deployment instead")
+	})
+
+	t.Run("missing template returns not found", func(t *testing.T) {
+		client := &guardrailsFakeClient{allowList: true, allowDelete: true}
+		recorder, _ := performGuardrailsRequest(t, client, http.MethodDelete, "/api/v1/guardrails/templates/missing?namespace=test-ns", nil)
+		assert.Equal(t, http.StatusNotFound, recorder.Code)
+	})
 }

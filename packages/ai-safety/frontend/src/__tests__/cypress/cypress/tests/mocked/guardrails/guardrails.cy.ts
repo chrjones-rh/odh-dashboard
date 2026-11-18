@@ -582,6 +582,56 @@ describe('Guardrails', () => {
     guardrailsPage.findTestResult().should('contain', 'Paris');
   });
 
+  it('should prefill new templates with the starter skeleton', () => {
+    initIntercepts({});
+    guardrailsPage.visit();
+
+    guardrailsPage.findUploadTemplateButton().click();
+    guardrailsPage.findManageTemplateModal().should('exist');
+
+    // The editor starts from a working prompt-injection guardrail rather
+    // than an empty surface.
+    guardrailsPage.waitForTemplateConfigEditor();
+    guardrailsPage
+      .getTemplateConfigYAML()
+      .should('contain', 'hf classifier check input $classifier="prompt-injection"');
+  });
+
+  it('should surface rail flow validation errors from the BFF', () => {
+    initIntercepts({});
+    guardrailsPage.visit();
+
+    guardrailsPage.findUploadTemplateButton().click();
+    guardrailsPage.findTemplateNameInput().type('my-broken-guardrail');
+
+    const configYAML = 'passthrough: true\nrails:\n  input:\n    flows:\n      - made up flow\n';
+    guardrailsPage.waitForTemplateConfigEditor();
+    guardrailsPage.setTemplateConfigYAML(configYAML);
+
+    cy.intercept(
+      {
+        method: 'POST',
+        pathname: '/ai-safety/api/v1/guardrails/templates',
+      },
+      {
+        statusCode: 400,
+        body: {
+          error: {
+            code: '400',
+            message:
+              'unknown input rail flow "made up flow"; the server recognizes these flows: ...',
+          },
+        },
+      },
+    );
+
+    guardrailsPage.findTemplateSubmitButton().click();
+    guardrailsPage
+      .findManageTemplateModal()
+      .findByTestId('manage-template-error')
+      .should('contain', 'unknown input rail flow "made up flow"');
+  });
+
   it('should upload a template and see it in the catalog', () => {
     initIntercepts({});
     guardrailsPage.visit();
@@ -591,7 +641,8 @@ describe('Guardrails', () => {
     guardrailsPage.findTemplateNameInput().type('my-uploaded-guardrail');
     guardrailsPage.findTemplateDescriptionInput().type('My uploaded guardrail');
 
-    const configYAML = 'passthrough: true\nrails:\n  input:\n    flows:\n      - mask pii\n';
+    const configYAML =
+      'passthrough: true\nrails:\n  input:\n    flows:\n      - mask sensitive data on input\n';
     guardrailsPage.waitForTemplateConfigEditor();
     guardrailsPage.setTemplateConfigYAML(configYAML);
 
@@ -672,6 +723,49 @@ describe('Guardrails', () => {
     });
 
     guardrailsPage.findTemplateRow('my-uploaded-guardrail').should('exist');
+  });
+
+  it('should delete a user-created template', () => {
+    initIntercepts({});
+    guardrailsPage.visit();
+
+    // Open the user template's drawer; the delete action is only offered
+    // for user-created templates.
+    guardrailsPage.findTemplateRow('my-custom-guardrail').click();
+    guardrailsPage
+      .findTemplateDrawer()
+      .findByTestId('guardrails-template-delete-my-custom-guardrail')
+      .click();
+    cy.findByTestId('delete-template-modal').should('exist');
+
+    // Reply with a true 204 No Content like the real BFF.
+    cy.intercept(
+      {
+        method: 'DELETE',
+        pathname: '/ai-safety/api/v1/guardrails/templates/my-custom-guardrail',
+        query: { namespace: TEST_NAMESPACE },
+      },
+      { statusCode: 204, body: '' },
+    ).as('deleteTemplate');
+
+    // The refreshed catalog no longer includes the deleted template.
+    cy.interceptApi(
+      'GET /api/:apiVersion/guardrails/templates',
+      {
+        path: {
+          apiVersion: CLIENT_API_VERSION,
+        },
+        query: {
+          namespace: TEST_NAMESPACE,
+        },
+      },
+      [],
+    );
+
+    cy.findByTestId('delete-template-submit-button').click();
+    cy.wait('@deleteTemplate');
+    guardrailsPage.findTemplateDrawer().should('not.be.visible');
+    guardrailsPage.findTemplateRow('my-custom-guardrail').should('not.exist');
   });
 
   it('should edit a user-created template', () => {

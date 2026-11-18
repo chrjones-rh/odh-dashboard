@@ -214,6 +214,42 @@ paths:
         description. Templates not created by the dashboard (including
         operator-managed platform templates) are rejected. Requires permission
         to update configmaps in the namespace.
+    delete:
+      tags:
+        - Guardrails
+      parameters:
+        - name: name
+          description: Name of the guardrail template ConfigMap.
+          schema:
+            type: string
+          in: path
+          required: true
+        - name: namespace
+          description: Namespace of the user-created template.
+          schema:
+            type: string
+          in: query
+          required: true
+      responses:
+        '204':
+          description: No Content
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      operationId: deleteGuardrailTemplate
+      summary: Delete a User Guardrail Template
+      description: >-
+        Deletes a dashboard-created user template. Templates not created by
+        the dashboard (including operator-managed platform templates) and
+        per-deployment configuration copies are rejected. Requires permission
+        to delete configmaps in the namespace.
   /api/v1/guardrails/deployments:
     summary: Path used to list NemoGuardrails deployments in a namespace.
     get:
